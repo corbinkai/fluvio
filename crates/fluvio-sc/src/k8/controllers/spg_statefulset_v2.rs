@@ -1,0 +1,398 @@
+use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::time::Duration;
+
+use anyhow::Result;
+use tracing::{debug, error, info, warn};
+
+use kube::api::{
+    Api, DynamicObject, ApiResource, GroupVersionKind,
+    Patch, PatchParams,
+};
+use kube::runtime::controller::{Action, Controller};
+use kube::runtime::watcher;
+use kube::runtime::WatchStreamExt;
+use kube::Client;
+use kube::ResourceExt;
+
+use k8s_openapi::api::apps::v1::StatefulSet;
+use k8s_openapi::api::core::v1::Service;
+use k8s_openapi::apimachinery::pkg::apis::meta::v1::OwnerReference;
+
+use fluvio_future::task::spawn;
+use fluvio_types::defaults::{
+    SPU_DEFAULT_NAME, SPU_PUBLIC_PORT, SPU_PRIVATE_PORT, SC_PRIVATE_PORT, PRODUCT_NAME,
+    TLS_SERVER_SECRET_NAME,
+};
+use futures_util::StreamExt;
+
+use crate::cli::TlsConfig;
+use super::spu_service_v2::load_spu_k8_config;
+use super::super::objects::spu_k8_config::ScK8Config;
+
+const SPG_GROUP: &str = "fluvio.infinyon.com";
+const SPG_VERSION: &str = "v1";
+const SPG_KIND: &str = "SpuGroup";
+
+pub struct SpgStatefulSetV2Context {
+    pub client: Client,
+    pub namespace: String,
+    pub tls: Option<TlsConfig>,
+}
+
+pub fn start(client: Client, namespace: String, tls: Option<TlsConfig>) {
+    let spg_ar = ApiResource::from_gvk(&GroupVersionKind::gvk(SPG_GROUP, SPG_VERSION, SPG_KIND));
+    let spugroups: Api<DynamicObject> = Api::namespaced_with(client.clone(), &namespace, &spg_ar);
+
+    let ctx = Arc::new(SpgStatefulSetV2Context {
+        client: client.clone(),
+        namespace: namespace.clone(),
+        tls,
+    });
+
+    let statefulsets: Api<StatefulSet> = Api::namespaced(client.clone(), &namespace);
+    let services: Api<Service> = Api::namespaced(client.clone(), &namespace);
+
+    spawn(async move {
+        let controller = Controller::new_with(spugroups, watcher::Config::default(), spg_ar)
+            .owns(statefulsets, watcher::Config::default())
+            .owns(services, watcher::Config::default())
+            .shutdown_on_signal()
+            .run(reconcile, error_policy, ctx)
+            .default_backoff()
+            .for_each(|result| async move {
+                match result {
+                    Ok((_obj, _action)) => {}
+                    Err(err) => {
+                        error!(%err, "spg statefulset v2 reconciliation error");
+                    }
+                }
+            });
+
+        info!("SpgStatefulSetV2Controller started");
+        controller.await;
+        info!("SpgStatefulSetV2Controller shut down");
+    });
+}
+
+async fn reconcile(
+    spg: Arc<DynamicObject>,
+    ctx: Arc<SpgStatefulSetV2Context>,
+) -> Result<Action, kube::Error> {
+    let spg_name = spg.name_any();
+    let spg_ns = spg.namespace().unwrap_or_else(|| ctx.namespace.clone());
+
+    debug!(%spg_name, "reconciling SpuGroup → StatefulSet + headless Service");
+
+    let spec = match spg.data.get("spec") {
+        Some(s) => s,
+        None => {
+            warn!(%spg_name, "SpuGroup has no spec, skipping");
+            return Ok(Action::requeue(Duration::from_secs(60)));
+        }
+    };
+
+    let replicas = spec
+        .get("replicas")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1) as i32;
+    let min_id = spec
+        .get("minId")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0) as i32;
+
+    // Load spu-k8 ConfigMap
+    let config = match load_spu_k8_config(&ctx.client, &spg_ns).await {
+        Ok(c) => c,
+        Err(err) => {
+            error!(%err, "failed to load spu-k8 ConfigMap");
+            return Ok(Action::requeue(Duration::from_secs(30)));
+        }
+    };
+
+    let owner_ref = OwnerReference {
+        api_version: format!("{SPG_GROUP}/{SPG_VERSION}"),
+        kind: SPG_KIND.to_string(),
+        name: spg_name.clone(),
+        uid: spg.uid().unwrap_or_default(),
+        controller: Some(true),
+        block_owner_deletion: Some(true),
+        ..Default::default()
+    };
+
+    // 1. Create/update headless service
+    let services_api: Api<Service> = Api::namespaced(ctx.client.clone(), &spg_ns);
+    let headless_svc = build_headless_service(&spg_name, &spg_ns, &owner_ref);
+    let svc_name = format!("fluvio-spg-{spg_name}");
+    services_api
+        .patch(
+            &svc_name,
+            &PatchParams::apply("fluvio-sc").force(),
+            &Patch::Apply(&headless_svc),
+        )
+        .await?;
+    debug!(%svc_name, "headless service applied");
+
+    // 2. Create/update StatefulSet
+    let statefulsets_api: Api<StatefulSet> = Api::namespaced(ctx.client.clone(), &spg_ns);
+    let sts = build_statefulset(
+        &spg_name, &spg_ns, replicas, min_id, &config,
+        ctx.tls.as_ref(), &owner_ref,
+    );
+    let sts_name = format!("fluvio-spg-{spg_name}");
+    statefulsets_api
+        .patch(
+            &sts_name,
+            &PatchParams::apply("fluvio-sc").force(),
+            &Patch::Apply(&sts),
+        )
+        .await?;
+    debug!(%sts_name, "statefulset applied");
+
+    Ok(Action::requeue(Duration::from_secs(300)))
+}
+
+fn error_policy(
+    _spg: Arc<DynamicObject>,
+    err: &kube::Error,
+    _ctx: Arc<SpgStatefulSetV2Context>,
+) -> Action {
+    error!(%err, "spg statefulset reconciliation error, retrying in 30s");
+    Action::requeue(Duration::from_secs(30))
+}
+
+fn build_headless_service(
+    group_name: &str,
+    namespace: &str,
+    owner_ref: &OwnerReference,
+) -> serde_json::Value {
+    serde_json::json!({
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+            "name": format!("fluvio-spg-{group_name}"),
+            "namespace": namespace,
+            "ownerReferences": [owner_ref],
+        },
+        "spec": {
+            "clusterIP": "None",
+            "selector": {
+                "app": SPU_DEFAULT_NAME,
+                "group": group_name,
+            },
+            "ports": [
+                {
+                    "name": "public",
+                    "port": SPU_PUBLIC_PORT,
+                },
+                {
+                    "name": "private",
+                    "port": SPU_PRIVATE_PORT,
+                }
+            ]
+        }
+    })
+}
+
+fn build_statefulset(
+    group_name: &str,
+    namespace: &str,
+    replicas: i32,
+    min_id: i32,
+    config: &ScK8Config,
+    tls_config: Option<&TlsConfig>,
+    owner_ref: &OwnerReference,
+) -> serde_json::Value {
+    let spu_pod_config = &config.spu_pod_config;
+    let svc_name = format!("fluvio-spg-{group_name}");
+    let sts_name = format!("fluvio-spg-{group_name}");
+
+    // Storage config defaults
+    let storage_size = "10Gi";
+
+    // Build env vars
+    let mut env = vec![
+        serde_json::json!({
+            "name": "SPU_INDEX",
+            "valueFrom": {
+                "fieldRef": {
+                    "fieldPath": "metadata.name"
+                }
+            }
+        }),
+        serde_json::json!({
+            "name": "SPU_MIN",
+            "value": format!("{min_id}")
+        }),
+    ];
+
+    if let Ok(rust_log) = std::env::var("RUST_LOG") {
+        env.push(serde_json::json!({
+            "name": "RUST_LOG",
+            "value": rust_log
+        }));
+    }
+
+    // Build args
+    let mut args = vec![
+        "/fluvio-run".to_string(),
+        "spu".to_string(),
+        "--sc-addr".to_string(),
+        format!("fluvio-sc-internal.{namespace}.svc.cluster.local:{SC_PRIVATE_PORT}"),
+        "--log-base-dir".to_string(),
+        format!("/var/lib/{PRODUCT_NAME}/data"),
+        "--log-size".to_string(),
+        storage_size.to_string(),
+    ];
+
+    let mut volume_mounts = vec![
+        serde_json::json!({
+            "name": "data",
+            "mountPath": format!("/var/lib/{PRODUCT_NAME}/data")
+        }),
+    ];
+
+    let mut volumes: Vec<serde_json::Value> = vec![];
+
+    if let Some(tls) = tls_config {
+        args.push("--tls".to_string());
+        if tls.enable_client_cert {
+            args.push("--enable-client-cert".to_string());
+            args.push("--ca-cert".to_string());
+            args.push(tls.ca_cert.clone().unwrap_or_default());
+            volume_mounts.push(serde_json::json!({
+                "name": "cacert",
+                "mountPath": "/var/certs/ca",
+                "readOnly": true
+            }));
+            volumes.push(serde_json::json!({
+                "name": "cacert",
+                "secret": { "secretName": "fluvio-ca" }
+            }));
+        }
+        args.push("--server-cert".to_string());
+        args.push(tls.server_cert.clone().unwrap_or_default());
+        args.push("--server-key".to_string());
+        args.push(tls.server_key.clone().unwrap_or_default());
+
+        volume_mounts.push(serde_json::json!({
+            "name": "tls",
+            "mountPath": "/var/certs/tls",
+            "readOnly": true
+        }));
+        volumes.push(serde_json::json!({
+            "name": "tls",
+            "secret": {
+                "secretName": tls.secret_name.clone()
+                    .unwrap_or_else(|| TLS_SERVER_SECRET_NAME.to_string())
+            }
+        }));
+
+        args.push("--bind-non-tls-public".to_string());
+        args.push("0.0.0.0:9007".to_string());
+    }
+
+    // Container
+    let mut container = serde_json::json!({
+        "name": SPU_DEFAULT_NAME,
+        "image": config.image,
+        "ports": [
+            { "name": "public", "containerPort": SPU_PUBLIC_PORT },
+            { "name": "private", "containerPort": SPU_PRIVATE_PORT },
+            { "name": "health", "containerPort": 9008 },
+        ],
+        "volumeMounts": volume_mounts,
+        "env": env,
+        "args": args,
+        "livenessProbe": {
+            "tcpSocket": { "port": 9008 },
+            "initialDelaySeconds": 5,
+            "periodSeconds": 10,
+        },
+        "readinessProbe": {
+            "httpGet": { "path": "/readyz", "port": 9008 },
+            "initialDelaySeconds": 5,
+            "periodSeconds": 5,
+        }
+    });
+
+    // Add resources if configured
+    if let Some(resources) = &spu_pod_config.resources {
+        if let Ok(res_json) = serde_json::to_value(resources) {
+            container.as_object_mut().unwrap().insert("resources".into(), res_json);
+        }
+    }
+
+    let mut pod_spec = serde_json::json!({
+        "terminationGracePeriodSeconds": 10,
+        "containers": [container],
+    });
+
+    if !volumes.is_empty() {
+        pod_spec.as_object_mut().unwrap().insert("volumes".into(), serde_json::json!(volumes));
+    }
+
+    if let Some(psc) = &config.pod_security_context {
+        if let Ok(psc_json) = serde_json::to_value(psc) {
+            pod_spec.as_object_mut().unwrap().insert("securityContext".into(), psc_json);
+        }
+    }
+
+    if !spu_pod_config.node_selector.is_empty() {
+        pod_spec.as_object_mut().unwrap().insert(
+            "nodeSelector".into(),
+            serde_json::to_value(&spu_pod_config.node_selector).unwrap(),
+        );
+    }
+
+    if let Some(pcn) = &spu_pod_config.priority_class_name {
+        pod_spec.as_object_mut().unwrap().insert(
+            "priorityClassName".into(),
+            serde_json::json!(pcn),
+        );
+    }
+
+    // Build the StatefulSet
+    serde_json::json!({
+        "apiVersion": "apps/v1",
+        "kind": "StatefulSet",
+        "metadata": {
+            "name": sts_name,
+            "namespace": namespace,
+            "ownerReferences": [owner_ref],
+        },
+        "spec": {
+            "replicas": replicas,
+            "serviceName": svc_name,
+            "selector": {
+                "matchLabels": {
+                    "app": SPU_DEFAULT_NAME,
+                    "group": group_name,
+                }
+            },
+            "template": {
+                "metadata": {
+                    "labels": {
+                        "app": SPU_DEFAULT_NAME,
+                        "group": group_name,
+                    }
+                },
+                "spec": pod_spec,
+            },
+            "volumeClaimTemplates": [
+                {
+                    "metadata": { "name": "data" },
+                    "spec": {
+                        "accessModes": ["ReadWriteOnce"],
+                        "storageClassName": spu_pod_config.storage_class,
+                        "resources": {
+                            "requests": {
+                                "storage": storage_size,
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    })
+}

@@ -266,7 +266,7 @@ fn build_spu_service(
     }
 }
 
-async fn load_spu_k8_config(client: &Client, namespace: &str) -> Result<ScK8Config> {
+pub async fn load_spu_k8_config(client: &Client, namespace: &str) -> Result<ScK8Config> {
     let configmaps: Api<ConfigMap> = Api::namespaced(client.clone(), namespace);
     match configmaps.get("spu-k8").await {
         Ok(cm) => {

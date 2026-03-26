@@ -1,7 +1,10 @@
 pub mod spg_stateful;
+pub mod spg_statefulset_v2;
 pub mod spu_service;
 pub mod spu_service_v2;
 pub mod spu_controller;
+pub mod spu_controller_v2;
+pub mod ingress;
 
 pub use k8_operator::run_k8_operators;
 
@@ -65,36 +68,56 @@ mod k8_operator {
             config_ctx.clone(),
         );
 
-        let svc_namespace = namespace.clone();
+        if let Some(kube_client) = kube_client {
+            // Use kube-rs controllers (v2)
+            let ns = namespace.clone();
 
-        whitelist!(config, "k8_spg", {
-            SpgStatefulSetController::start(
-                namespace,
-                config_ctx.clone(),
-                global_ctx.spgs().clone(),
-                statefulset_ctx,
-                global_ctx.spus().clone(),
-                spg_service_ctx,
-                tls,
-            );
-        });
+            whitelist!(config, "k8_spg", {
+                super::spg_statefulset_v2::start(
+                    kube_client.clone(),
+                    ns.clone(),
+                    tls,
+                );
+            });
 
-        whitelist!(config, "k8_spu", {
-            K8SpuController::start(
-                global_ctx.spus().clone(),
-                spu_service_ctx.clone(),
-                global_ctx.spgs().clone(),
-            );
-        });
+            whitelist!(config, "k8_spu", {
+                super::spu_controller_v2::start(
+                    kube_client.clone(),
+                    ns.clone(),
+                );
+            });
 
-        whitelist!(config, "k8_spu_service", {
-            if let Some(kube_client) = kube_client {
-                // Use kube-rs controller (v2)
-                super::spu_service_v2::start(kube_client, svc_namespace);
-            } else {
-                // Fallback to old controller (for local/memory mode)
+            whitelist!(config, "k8_spu_service", {
+                super::spu_service_v2::start(
+                    kube_client.clone(),
+                    ns.clone(),
+                );
+            });
+        } else {
+            // Fallback to old controllers (for local/memory mode)
+            whitelist!(config, "k8_spg", {
+                SpgStatefulSetController::start(
+                    namespace,
+                    config_ctx.clone(),
+                    global_ctx.spgs().clone(),
+                    statefulset_ctx,
+                    global_ctx.spus().clone(),
+                    spg_service_ctx,
+                    tls,
+                );
+            });
+
+            whitelist!(config, "k8_spu", {
+                K8SpuController::start(
+                    global_ctx.spus().clone(),
+                    spu_service_ctx.clone(),
+                    global_ctx.spgs().clone(),
+                );
+            });
+
+            whitelist!(config, "k8_spu_service", {
                 SpuServiceController::start(config_ctx, spu_service_ctx, global_ctx.spgs().clone());
-            }
-        });
+            });
+        }
     }
 }
