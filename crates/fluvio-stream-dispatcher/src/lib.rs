@@ -11,5 +11,5 @@ pub mod core {
     pub use fluvio_stream_model::core::*;
 }
 
-#[cfg(feature = "k8")]
+#[cfg(any(feature = "k8", feature = "kube"))]
 pub use fluvio_stream_model::k8_types;

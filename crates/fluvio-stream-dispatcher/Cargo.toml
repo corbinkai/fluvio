@@ -14,6 +14,7 @@ path = "src/lib.rs"
 [features]
 local = ["fluvio-stream-model/use_serde", "fluvio-stream-model/k8", "serde_yaml", "parking_lot"]
 k8 = ["fluvio-stream-model/k8", "k8-client", "serde_json"]
+kube = ["fluvio-stream-model/k8", "dep:kube", "dep:k8s-openapi", "serde_json"]
 
 [dependencies]
 anyhow = { workspace = true }
@@ -35,6 +36,8 @@ tempfile = { workspace = true }
 fluvio-types = { workspace = true }
 fluvio-stream-model = { workspace = true }
 k8-client = { workspace = true, optional = true, features = ["memory_client"] }
+kube = { workspace = true, optional = true }
+k8s-openapi = { workspace = true, optional = true }
 fluvio-future = { workspace = true, features = ["task", "timer"] }
 
 [dev-dependencies]

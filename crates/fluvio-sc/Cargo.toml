@@ -34,7 +34,7 @@ semver = { workspace = true }
 serde = { workspace = true, features = ['derive'] }
 serde_json = { workspace = true }
 sysinfo = { workspace = true }
-tokio = { workspace = true, features = ["macros"] }
+tokio = { workspace = true, features = ["macros", "rt"] }
 tracing = { workspace = true }
 
 
@@ -52,8 +52,11 @@ fluvio-sc-schema = { workspace = true, features = ["use_serde", "json"] }
 fluvio-stream-model = { workspace = true, features = ["k8", "use_serde"]  }
 fluvio-controlplane = { workspace = true }
 fluvio-controlplane-metadata = { workspace = true, features = ["k8","serde"] }
-fluvio-stream-dispatcher = { workspace = true, features = ["k8", "local"]}
+fluvio-stream-dispatcher = { workspace = true, features = ["k8", "kube", "local"]}
 k8-client = { workspace = true, features = ["memory_client"] }
+k8s-openapi = { workspace = true }
+kube = { workspace = true }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 fluvio-protocol = { workspace = true }
 fluvio-socket = { workspace = true }
 fluvio-service = { workspace = true  }

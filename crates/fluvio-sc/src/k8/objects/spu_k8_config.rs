@@ -50,6 +50,10 @@ pub struct ScK8Config {
 }
 
 impl ScK8Config {
+    pub fn from_data(data: BTreeMap<String, String>) -> Result<Self> {
+        Self::from(data)
+    }
+
     fn from(mut data: BTreeMap<String, String>) -> Result<Self> {
         debug!("ConfigMap {} data: {:?}", CONFIG_MAP_NAME, data);
 

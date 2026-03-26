@@ -1,5 +1,6 @@
 pub mod spg_stateful;
 pub mod spu_service;
+pub mod spu_service_v2;
 pub mod spu_controller;
 
 pub use k8_operator::run_k8_operators;
@@ -26,6 +27,7 @@ mod k8_operator {
     pub async fn run_k8_operators<C: MetadataClient<K8MetaItem> + 'static>(
         namespace: String,
         client: SharedClient<C>,
+        kube_client: Option<kube::Client>,
         global_ctx: K8SharedContext,
         tls: Option<TlsConfig>,
     ) {
@@ -63,6 +65,8 @@ mod k8_operator {
             config_ctx.clone(),
         );
 
+        let svc_namespace = namespace.clone();
+
         whitelist!(config, "k8_spg", {
             SpgStatefulSetController::start(
                 namespace,
@@ -84,7 +88,13 @@ mod k8_operator {
         });
 
         whitelist!(config, "k8_spu_service", {
-            SpuServiceController::start(config_ctx, spu_service_ctx, global_ctx.spgs().clone());
+            if let Some(kube_client) = kube_client {
+                // Use kube-rs controller (v2)
+                super::spu_service_v2::start(kube_client, svc_namespace);
+            } else {
+                // Fallback to old controller (for local/memory mode)
+                SpuServiceController::start(config_ctx, spu_service_ctx, global_ctx.spgs().clone());
+            }
         });
     }
 }

@@ -9,8 +9,9 @@ use tracing::info;
 
 use fluvio_future::{task::run_block_on, timer::sleep};
 use fluvio_stream_dispatcher::metadata::{SharedClient, MetadataClient, local::LocalMetadataStorage};
+use fluvio_stream_dispatcher::metadata::kube_rs::KubeClient;
 use fluvio_stream_model::{store::k8::K8MetaItem, core::MetadataItem};
-use k8_client::{K8Client, K8Config, memory::MemoryClient};
+use k8_client::memory::MemoryClient;
 
 use crate::{
     cli::{ScOpt, TlsConfig, RunMode},
@@ -46,22 +47,54 @@ pub fn main_loop(opt: ScOpt) {
             local_main_loop(sc_config, client, auth_policy, tls_option)
         }
         RunMode::K8s => {
-            info!("Running with K8");
+            info!("Running with K8 (kube-rs)");
 
             let ((mut sc_config, auth_policy), tls_option) = opt.parse_cli_or_exit();
 
-            let k8_config = K8Config::load().expect("no k8 config founded");
-            info!(?k8_config, "k8 config");
+            // Install rustls crypto provider (required by rustls 0.23+)
+            rustls::crypto::ring::default_provider()
+                .install_default()
+                .expect("failed to install rustls crypto provider");
 
-            // if namespace is default, use one from k8 config
-            if sc_config.namespace == DEFAULT_NAMESPACE {
-                let k8_namespace = k8_config.namespace().to_owned();
-                info!("using {} as namespace from kubernetes config", k8_namespace);
-                sc_config.namespace = k8_namespace;
-            }
+            // Create kube client and run main loop inside the same runtime.
+            // kube::Client must be created in the runtime it will be used in,
+            // because its HTTP connection pool is tied to the runtime.
+            run_block_on(async move {
+                let kube_client = kube::Client::try_default()
+                    .await
+                    .expect("failed to create kube-rs client");
 
-            let client = create_k8_client(k8_config).expect("failed to create k8 client");
-            k8_main_loop(sc_config, client, auth_policy, tls_option)
+                let k8_namespace = kube_client.default_namespace().to_owned();
+                if sc_config.namespace == DEFAULT_NAMESPACE {
+                    info!("using {} as namespace from kubernetes config", k8_namespace);
+                    sc_config.namespace = k8_namespace;
+                }
+
+                let client: SharedClient<KubeClient> = Arc::new(KubeClient::new(kube_client.clone()));
+
+                info!("starting k8 main loop");
+                let ctx = crate::init::start_main_loop(
+                    (sc_config.clone(), auth_policy),
+                    client.clone(),
+                )
+                .await;
+
+                crate::k8::controllers::run_k8_operators(
+                    sc_config.namespace.clone(),
+                    client,
+                    Some(kube_client),
+                    ctx,
+                    tls_option.clone().map(|(_, config)| config),
+                )
+                .await;
+
+                proxy::start_if(sc_config, tls_option).await;
+
+                println!("Streaming Controller started successfully");
+                loop {
+                    sleep(Duration::from_secs(60)).await;
+                }
+            });
         }
     }
 }
@@ -101,6 +134,7 @@ fn k8_main_loop<C>(
         crate::k8::controllers::run_k8_operators(
             sc_config.namespace.clone(),
             client,
+            None,
             ctx,
             tls_option.clone().map(|(_, config)| config),
         )
@@ -198,10 +232,6 @@ async fn create_memory_client(path: PathBuf) -> Result<Arc<MemoryClient>> {
     }
 
     Ok(Arc::new(client))
-}
-
-fn create_k8_client(config: K8Config) -> Result<Arc<K8Client>> {
-    k8_client::new_shared(config)
 }
 
 fn create_local_metadata_store(path: &Path) -> Arc<LocalMetadataStorage> {
