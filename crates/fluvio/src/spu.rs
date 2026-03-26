@@ -109,7 +109,23 @@ impl SpuPool for SpuSocketPool {
                 let port = local.port;
                 format!("{host}:{port}")
             }
-            _ => spu.spec.public_endpoint.addr(),
+            _ => {
+                // If publicEndpoint has no host (e.g. ClusterIP without ingress),
+                // fall back to publicEndpointLocal before failing
+                if spu.spec.public_endpoint.host().is_none() {
+                    if let Some(ref local) = spu.spec.public_endpoint_local {
+                        debug!(
+                            "publicEndpoint has no host, falling back to publicEndpointLocal: {}:{}",
+                            local.host, local.port
+                        );
+                        format!("{}:{}", local.host, local.port)
+                    } else {
+                        spu.spec.public_endpoint.addr()
+                    }
+                } else {
+                    spu.spec.public_endpoint.addr()
+                }
+            }
         };
 
         debug!(leader = spu.spec.id,addr = %spu_addr,"try connecting to spu");

@@ -11,5 +11,9 @@ VERSION
 vendor/
 *.tmp
 
+CLAUDE.md
+TODO.md
+plans/
+
 # Test Connectors Logs
 connector/**/*.log

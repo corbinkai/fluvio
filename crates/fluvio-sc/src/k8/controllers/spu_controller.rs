@@ -239,6 +239,20 @@ fn get_ingress_from_service(
     // Add additional ingress via annotation value
     add_ingress_from_svc_annotation(svc_md, &mut computed_spu_ingressport.ingress);
 
+    // For ClusterIP services with no LB ingress and no annotation,
+    // fall back to the service FQDN so publicEndpoint is usable without
+    // requiring a fluvio.io/ingress-address annotation.
+    if computed_spu_ingressport.ingress.is_empty() && is_cluster_ip(lb_type) {
+        let svc_name = svc_md.key();
+        let namespace = svc_md.ctx().item().namespace();
+        let fqdn = format!("{svc_name}.{namespace}.svc.cluster.local");
+        debug!(%fqdn, "ClusterIP service with no ingress, using service FQDN");
+        computed_spu_ingressport.ingress.push(IngressAddr {
+            hostname: Some(fqdn),
+            ip: None,
+        });
+    }
+
     debug!(
         "Computed SPU ingress after applying any svc annotation: {:?}",
         &computed_spu_ingressport
@@ -264,6 +278,11 @@ fn add_ingress_from_svc_annotation(
             });
         }
     }
+}
+
+/// Returns true if the service type is ClusterIP (or unset, which defaults to ClusterIP in K8s).
+fn is_cluster_ip(lb_type: Option<&LoadBalancerType>) -> bool {
+    matches!(lb_type, None | Some(LoadBalancerType::ClusterIP))
 }
 
 fn convert(ingress_addr: &LoadBalancerIngress) -> IngressAddr {

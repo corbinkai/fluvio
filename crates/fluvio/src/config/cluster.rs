@@ -48,8 +48,9 @@ impl FluvioClusterConfig {
     /// get current cluster config from default profile
     pub fn load() -> Result<Self, FluvioError> {
         let config_file = ConfigFile::load_default_or_new()?;
-        let cluster_config = config_file.config().current_cluster()?;
-        Ok(cluster_config.to_owned())
+        let mut cluster_config = config_file.config().current_cluster()?.to_owned();
+        cluster_config.apply_env_overrides();
+        Ok(cluster_config)
     }
 
     /// get cluster config from profile
@@ -57,7 +58,18 @@ impl FluvioClusterConfig {
     pub fn load_with_profile(profile_name: &str) -> Result<Option<Self>, FluvioError> {
         let config_file = ConfigFile::load_default_or_new()?;
         let cluster_config = config_file.config().cluster_with_profile(profile_name);
-        Ok(cluster_config.cloned())
+        Ok(cluster_config.cloned().map(|mut c| {
+            c.apply_env_overrides();
+            c
+        }))
+    }
+
+    fn apply_env_overrides(&mut self) {
+        if let Ok(val) = std::env::var("FLUVIO_SPU_LOCAL") {
+            if val.eq_ignore_ascii_case("true") || val == "1" {
+                self.use_spu_local_address = true;
+            }
+        }
     }
 
     /// Create a new cluster configuration with no TLS.

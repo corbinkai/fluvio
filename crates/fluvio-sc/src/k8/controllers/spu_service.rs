@@ -207,6 +207,22 @@ impl SpuServiceController {
             .annotations
             .clone_from(&spu_k8_config.lb_service_annotations);
 
+        // K8s Service .spec.type is immutable on update. If the service type
+        // changed (e.g. NodePort → ClusterIP), we must delete and recreate.
+        if let Some(existing) = self.services.store().value(&svc_name).await {
+            let existing_type = existing.spec().inner().r#type.as_ref();
+            let new_type = k8_service_spec.r#type.as_ref();
+            if existing_type != new_type {
+                info!(
+                    %svc_name, ?existing_type, ?new_type,
+                    "service type changed, deleting before recreate"
+                );
+                self.services
+                    .wait_action(&svc_name, WSAction::Delete(svc_name.clone()))
+                    .await?;
+            }
+        }
+
         let obj = MetadataStoreObject::with_spec(svc_name.clone(), k8_service_spec.into())
             .with_context(ctx);
         debug!("action: {:#?}", obj);
