@@ -203,9 +203,12 @@ impl SpuServiceController {
             .ctx()
             .create_child()
             .set_labels(vec![("fluvio.io/spu-name", spu_name)]);
-        ctx.item_mut()
-            .annotations
-            .clone_from(&spu_k8_config.lb_service_annotations);
+        let mut annotations = spu_k8_config.lb_service_annotations.clone();
+        for value in annotations.values_mut() {
+            *value = value.replace("{replica}", &replica.to_string());
+            *value = value.replace("{spu_name}", spu_name);
+        }
+        ctx.item_mut().annotations = annotations;
 
         // K8s Service .spec.type is immutable on update. If the service type
         // changed (e.g. NodePort → ClusterIP), we must delete and recreate.

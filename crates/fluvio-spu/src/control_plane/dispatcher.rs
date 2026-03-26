@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::Duration;
 use std::fmt::Debug;
 
@@ -25,6 +26,7 @@ use fluvio_controlplane::spu_api::update_mirror::UpdateMirrorRequest;
 use fluvio_controlplane::sc_api::update_partition::UpdatePartitionStatRequest;
 
 use crate::core::SharedGlobalContext;
+use crate::health::HealthState;
 
 use super::message_sink::SharedLrsStatusUpdate;
 use super::{SharedMirrorStatusUpdate, SharedPartitionStatusUpdate};
@@ -47,16 +49,18 @@ pub struct ScDispatcher<S> {
     mirror_status_update: SharedMirrorStatusUpdate,
     partition_status_update: SharedPartitionStatusUpdate,
     counter: DispatcherCounter,
+    health: Arc<HealthState>,
 }
 
 impl ScDispatcher<FileReplica> {
-    pub fn new(ctx: SharedGlobalContext<FileReplica>) -> Self {
+    pub fn new(ctx: SharedGlobalContext<FileReplica>, health: Arc<HealthState>) -> Self {
         Self {
             lrs_status_update: ctx.status_update_owned(),
             mirror_status_update: ctx.mirror_status_update_owned(),
             partition_status_update: ctx.partition_status_update_owned(),
             ctx,
             counter: DispatcherCounter::default(),
+            health,
         }
     }
 
@@ -91,12 +95,15 @@ impl ScDispatcher<FileReplica> {
             };
 
             if !status {
+                self.health.set_sc_connected(false);
                 warn!("sleeping 3 seconds before re-trying re-register");
                 sleep(Duration::from_millis(WAIT_RECONNECT_INTERVAL)).await;
             } else {
+                self.health.set_sc_connected(true);
                 // continuously process updates from and send back status to SC
                 match self.request_loop(socket).await {
                     Ok(_) => {
+                        self.health.set_sc_connected(false);
                         debug!(
                             %counter,
                             "sc connection terminated, waiting before reconnecting",
@@ -106,6 +113,7 @@ impl ScDispatcher<FileReplica> {
                         counter += 1;
                     }
                     Err(err) => {
+                        self.health.set_sc_connected(false);
                         warn!(?err, "error connecting to sc, waiting before reconnecting",);
                         // We are  connection to sc.  Retry again
                         // Currently we use 3 seconds to retry but this should be using backoff algorithm

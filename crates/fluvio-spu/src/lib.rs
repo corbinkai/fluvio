@@ -12,6 +12,7 @@ cfg_if::cfg_if! {
         mod storage;
         mod smartengine;
         mod monitoring;
+        mod health;
         pub(crate) mod mirroring;
         pub use start::main_loop;
     }

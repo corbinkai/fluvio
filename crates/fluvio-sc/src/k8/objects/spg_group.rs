@@ -183,6 +183,7 @@ mod k8_convert {
     use fluvio_stream_model::k8_types::*;
     use fluvio_stream_model::k8_types::core::pod::{
         ContainerSpec, ContainerPortSpec, PodSpec, VolumeMount, VolumeSpec, SecretVolumeSpec,
+        Probe, TcpSocketAction,
     };
     use fluvio_stream_model::k8_types::core::service::*;
     use fluvio_stream_model::k8_types::app::stateful::{
@@ -310,14 +311,31 @@ mod k8_convert {
         volume_mounts.append(&mut spu_pod_config.extra_volume_mounts.clone());
         volumes.append(&mut spu_pod_config.extra_volumes.clone());
 
+        let mut health_port = ContainerPortSpec {
+            container_port: 9008,
+            ..Default::default()
+        };
+        health_port.name = Some("health".to_owned());
+
+        let liveness_probe = Some(Probe {
+            tcp_socket: Some(TcpSocketAction {
+                host: String::new(),
+                port: 9008,
+            }),
+            initial_delay_seconds: Some(5),
+            period_seconds: Some(10),
+            ..Default::default()
+        });
+
         let mut containers = vec![ContainerSpec {
             name: SPU_DEFAULT_NAME.to_owned(),
             image: Some(spu_k8_config.image.clone()),
             resources: spu_pod_config.resources.clone(),
-            ports: vec![public_port, private_port],
+            ports: vec![public_port, private_port, health_port],
             volume_mounts,
             env,
             args,
+            liveness_probe,
             ..Default::default()
         }];
 

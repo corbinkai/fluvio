@@ -10,6 +10,7 @@ use crate::services::public::create_public_server;
 use crate::core::DefaultSharedGlobalContext;
 use crate::core::GlobalContext;
 use crate::control_plane::ScDispatcher;
+use crate::health::{HealthState, start_health_server};
 
 type FileReplicaContext = GlobalContext<FileReplica>;
 
@@ -45,7 +46,7 @@ pub fn main_loop(opt: SpuOpt) {
     info!(uptime = System::uptime(), "Uptime in secs");
 
     run_block_on(async move {
-        let ctx = create_services(spu_config.clone(), true, true);
+        let (ctx, health) = create_services(spu_config.clone(), true, true);
 
         init_monitoring(ctx);
 
@@ -55,10 +56,20 @@ pub fn main_loop(opt: SpuOpt) {
 
         println!("SPU Version: {VERSION} started successfully");
 
-        // infinite loop
-        loop {
-            sleep(Duration::from_secs(60)).await;
-        }
+        // Wait for SIGTERM (K8s pod shutdown signal)
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut sigterm = signal(SignalKind::terminate())
+            .expect("failed to register SIGTERM handler");
+        sigterm.recv().await;
+        info!("Received SIGTERM, shutting down");
+
+        // Notify all server shutdown events to drain active connections
+        health.trigger_shutdown();
+
+        // Allow in-flight operations to drain. The readiness probe will
+        // stop sending new traffic. termination_grace_period_seconds is 10s.
+        sleep(Duration::from_secs(3)).await;
+        info!("SPU shutdown complete");
     });
 }
 
@@ -67,8 +78,13 @@ pub fn create_services(
     local_spu: SpuConfig,
     internal: bool,
     public: bool,
-) -> DefaultSharedGlobalContext {
+) -> (DefaultSharedGlobalContext, Arc<HealthState>) {
     let ctx = FileReplicaContext::new_shared_context(local_spu);
+
+    let health = Arc::new(HealthState::new());
+
+    // Storage is ready once the context is created (FileReplica initialized)
+    health.set_storage_ready(true);
 
     let public_ep_addr = ctx.config().public_socket_addr().to_owned();
     let private_ep_addr = ctx.config().private_socket_addr().to_owned();
@@ -77,18 +93,22 @@ pub fn create_services(
         let authorization = Arc::new(RootAuthorization::new());
         let auth_global_ctx = SpuAuthGlobalContext::new(ctx.clone(), authorization);
         let pub_server = create_public_server(public_ep_addr, auth_global_ctx);
-        pub_server.run();
+        let shutdown = pub_server.run();
+        health.register_shutdown_event(shutdown);
     };
 
     if internal {
         let priv_server = create_internal_server(private_ep_addr, ctx.clone());
-        priv_server.run();
+        let shutdown = priv_server.run();
+        health.register_shutdown_event(shutdown);
     };
 
-    let sc_dispatcher = ScDispatcher::new(ctx.clone());
+    start_health_server(health.clone());
+
+    let sc_dispatcher = ScDispatcher::new(ctx.clone(), health.clone());
     sc_dispatcher.run();
 
-    ctx
+    (ctx, health)
 }
 
 mod proxy {

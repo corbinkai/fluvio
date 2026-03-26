@@ -32,7 +32,7 @@ futures-util = { workspace = true, features = ["sink"] }
 async-trait = { workspace = true }
 serde = { workspace = true,  features = ['derive'] }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["macros"] }
+tokio = { workspace = true, features = ["macros", "net", "io-util", "signal"] }
 async-channel = { workspace = true }
 async-lock = { workspace = true }
 async-io = { workspace = true }
