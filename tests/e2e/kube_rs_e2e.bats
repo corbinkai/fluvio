@@ -116,9 +116,28 @@ EOF
 }
 
 @test "Health endpoint responds on port 9008" {
-    # This tests the health server if an SPU is running locally
-    # Skip if no SPU is running (StatefulSet pods won't start without image)
-    skip "SPU pods require container image in k3d registry"
+    # Check if SPU pod exists and is running
+    local pod_status
+    pod_status=$(kubectl get pod fluvio-spg-e2e-test-0 -n "$NAMESPACE" --context "$KUBE_CTX" -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
+    if [ "$pod_status" != "Running" ]; then
+        skip "SPU pod not running (status: $pod_status) — push image with 'just push-image' first"
+    fi
+
+    # Port-forward and test health endpoints
+    kubectl port-forward pod/fluvio-spg-e2e-test-0 29008:9008 -n "$NAMESPACE" --context "$KUBE_CTX" &
+    local pf_pid=$!
+    sleep 2
+
+    local healthz
+    healthz=$(curl -s http://localhost:29008/healthz)
+    [ "$healthz" = "ok" ]
+
+    local readyz
+    readyz=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:29008/readyz)
+    # Either 200 (connected to SC) or 503 (not connected) is valid
+    [ "$readyz" = "200" ] || [ "$readyz" = "503" ]
+
+    kill "$pf_pid" 2>/dev/null || true
 }
 
 @test "SpuGroup deletion cascades to owned resources" {

@@ -2,7 +2,8 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 
 root_dir     := justfile_directory()
 cluster_name := "koshee-fluvio"
-registry     := "koshee-fluvio-registry.localhost:16050"
+registry_host := "localhost:9050"
+registry     := "koshee-dev-zot:5000"
 namespace    := "fluvio-system"
 kube_ctx     := "k3d-" + cluster_name
 
@@ -63,12 +64,44 @@ test:
 test-crate crate:
     cargo test --lib -p {{ crate }}
 
-# Run integration tests (requires SmartModules built first)
+# Run SPU + socket integration tests (requires SmartModules built)
 test-integration: build-smartmodules
     cargo test --lib --all-features -p fluvio-spu -- --ignored --test-threads=1
     cargo test --lib --all-features -p fluvio-socket -- --ignored --test-threads=1
     cargo test --lib --all-features -p fluvio-service -- --ignored --test-threads=1
     cargo test -p fluvio-smartengine -- --ignored --test-threads=1
+
+# Run k3d integration tests (requires cluster: just create-cluster)
+test-k8-integration: create-cluster
+    cargo test -p fluvio-sc --test k8_integration -- --ignored --test-threads=1
+
+# Run E2E bats tests against k3d (requires cluster + built image)
+test-e2e: create-cluster
+    bats tests/e2e/kube_rs_e2e.bats
+
+# Run ALL tests: unit + integration + k3d + e2e
+test-all: build-smartmodules create-cluster
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "=== Unit tests ==="
+    cargo test --lib --all-features
+    echo ""
+    echo "=== SPU integration tests (64 tests) ==="
+    cargo test --lib --all-features -p fluvio-spu -- --ignored --test-threads=1
+    echo ""
+    echo "=== Socket integration tests (4 tests) ==="
+    cargo test --lib --all-features -p fluvio-socket -- --ignored --test-threads=1
+    echo ""
+    echo "=== SmartEngine integration tests ==="
+    cargo test -p fluvio-smartengine -- --ignored --test-threads=1
+    echo ""
+    echo "=== K3d controller integration tests (20 tests) ==="
+    cargo test -p fluvio-sc --test k8_integration -- --ignored --test-threads=1
+    echo ""
+    echo "=== E2E bats tests (6 tests) ==="
+    bats tests/e2e/kube_rs_e2e.bats
+    echo ""
+    echo "=== All tests passed ==="
 
 # Run SmartModule engine tests
 test-smartmodule: build-smartmodules
@@ -87,7 +120,10 @@ test-bats file:
     bats {{ file }}
 
 # Build SmartModule examples (needed by integration tests)
-build-smartmodules:
+build-smartmodules: build-smdk
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="{{ root_dir }}/target/debug:$PATH"
     make -C smartmodule/examples build
 
 # ============================================================
@@ -166,23 +202,27 @@ cluster-status:
 # DEPLOY (K3D)
 # ============================================================
 
+# Build fluvio-run with musl for Alpine containers
+build-musl:
+    cargo zigbuild --bin fluvio-run -p fluvio-run --target x86_64-unknown-linux-musl
+
 # Build and push fluvio-run image to k3d registry
-push-image: build-cluster
+push-image: build-musl
     #!/usr/bin/env bash
     set -euo pipefail
     TAG=$(date +%s)
-    IMAGE="{{ registry }}/fluvio-run:${TAG}"
+    HOST_IMAGE="{{ registry_host }}/fluvio-run:${TAG}"
 
     echo "Building Docker image..."
     docker build \
-      --build-arg BINARY=./target/debug/fluvio-run \
+      --build-arg BINARY=./target/x86_64-unknown-linux-musl/debug/fluvio-run \
       -f k8-util/docker/Dockerfile.fluvio-run \
-      -t "${IMAGE}" \
+      -t "${HOST_IMAGE}" \
       .
 
     echo "Pushing to k3d registry..."
-    docker push "${IMAGE}"
-    echo "IMAGE=${IMAGE}"
+    skopeo copy --tmpdir /tmp --dest-tls-verify=false "docker-daemon:${HOST_IMAGE}" "docker://${HOST_IMAGE}"
+    echo "IMAGE={{ registry }}/fluvio-run:${TAG}"
 
 # Deploy SC to k3d cluster
 deploy: push-image

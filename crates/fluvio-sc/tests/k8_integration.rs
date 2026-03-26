@@ -578,3 +578,92 @@ async fn test_service_selector_matches_pod() {
     sc.kill().ok();
     sc.wait().ok();
 }
+
+// ============================================================
+// KubeClient / K8s API Direct Tests (no SC needed)
+// ============================================================
+
+#[tokio::test]
+#[ignore]
+async fn test_k8s_api_create_and_get_topic() {
+    rustls::crypto::ring::default_provider().install_default().ok();
+    let client = make_client().await;
+
+    let topic_ar = ApiResource::from_gvk(&GroupVersionKind::gvk(SPG_GROUP, "v2", "Topic"));
+    let topics: Api<DynamicObject> = Api::namespaced_with(client.clone(), NAMESPACE, &topic_ar);
+
+    // Topic CRD uses open schema — pass minimal spec
+    let topic = serde_json::json!({
+        "apiVersion": "fluvio.infinyon.com/v2",
+        "kind": "Topic",
+        "metadata": { "name": "test-api-topic", "namespace": NAMESPACE },
+        "spec": {}
+    });
+
+    topics.patch("test-api-topic", &PatchParams::apply("test").force(), &Patch::Apply(topic)).await.unwrap();
+
+    let fetched = topics.get("test-api-topic").await.unwrap();
+    assert_eq!(fetched.name_any(), "test-api-topic");
+
+    topics.delete("test-api-topic", &DeleteParams::default()).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_k8s_api_list_empty() {
+    rustls::crypto::ring::default_provider().install_default().ok();
+    let client = make_client().await;
+
+    let mirror_ar = ApiResource::from_gvk(&GroupVersionKind::gvk(SPG_GROUP, SPG_VERSION, "Mirror"));
+    let mirrors: Api<DynamicObject> = Api::namespaced_with(client.clone(), NAMESPACE, &mirror_ar);
+
+    let list = mirrors.list(&ListParams::default()).await.unwrap();
+    assert!(list.items.is_empty(), "expected no mirrors");
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_k8s_api_delete_nonexistent() {
+    rustls::crypto::ring::default_provider().install_default().ok();
+    let client = make_client().await;
+
+    let topic_ar = ApiResource::from_gvk(&GroupVersionKind::gvk(SPG_GROUP, "v2", "Topic"));
+    let topics: Api<DynamicObject> = Api::namespaced_with(client.clone(), NAMESPACE, &topic_ar);
+
+    let result = topics.delete("nonexistent-topic-xyz", &DeleteParams::default()).await;
+    assert!(result.is_err(), "deleting nonexistent should error");
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_k8s_api_spugroup_create_and_status() {
+    rustls::crypto::ring::default_provider().install_default().ok();
+    let client = make_client().await;
+
+    let name = "test-api-spg";
+    create_spugroup(&client, name, 1, 9000).await;
+
+    let spg = spg_api(&client).get(name).await.unwrap();
+    assert_eq!(spg.name_any(), name);
+
+    // Status should exist (may be empty initially)
+    let status = spg.data.get("status");
+    // Status might not be set yet, that's fine
+    assert!(status.is_none() || status.unwrap().is_object());
+
+    delete_spugroup(&client, name).await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_k8s_api_core_group_services() {
+    // Test that the "core" group mapping works for native K8s types
+    rustls::crypto::ring::default_provider().install_default().ok();
+    let client = make_client().await;
+
+    let services: Api<Service> = Api::namespaced(client.clone(), NAMESPACE);
+    // This should not error — it validates the API path works
+    let list = services.list(&ListParams::default()).await.unwrap();
+    // There might be services from other tests
+    assert!(list.items.len() >= 0); // just verifies the API call works
+}
