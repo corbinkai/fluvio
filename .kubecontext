@@ -1,0 +1,3 @@
+cluster: k3d-koshee-fluvio
+kubeconfig: ~/.kube/config
+type: k3d-dev

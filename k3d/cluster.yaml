@@ -1,0 +1,25 @@
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: koshee-fluvio
+servers: 1
+agents: 2
+image: rancher/k3s:v1.28.5-k3s1
+registries:
+  create:
+    name: koshee-fluvio-registry.localhost
+    hostPort: "16050"
+ports:
+  - port: 16080:80
+    nodeFilters: [loadbalancer]
+  - port: 16443:443
+    nodeFilters: [loadbalancer]
+network: k3d-shared
+options:
+  k3s:
+    extraArgs:
+      - arg: --disable=traefik
+        nodeFilters: [server:*]
+volumes:
+  - volume: /tmp/k3d-fluvio:/var/lib/rancher/k3s/storage
+    nodeFilters: [server:*, agent:*]

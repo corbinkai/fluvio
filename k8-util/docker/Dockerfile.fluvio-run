@@ -1,0 +1,4 @@
+FROM alpine:3.14
+ARG BINARY=./fluvio-run
+COPY ${BINARY} /fluvio-run
+ENTRYPOINT ["/fluvio-run"]
