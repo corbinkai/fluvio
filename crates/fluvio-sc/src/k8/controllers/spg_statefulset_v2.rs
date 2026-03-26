@@ -304,8 +304,8 @@ fn build_statefulset(
     }
 
     // Build args
+    // ENTRYPOINT in the Dockerfile is /fluvio-run, so args start with the subcommand
     let mut args = vec![
-        "/fluvio-run".to_string(),
         "spu".to_string(),
         "--sc-addr".to_string(),
         format!("fluvio-sc-internal.{namespace}.svc.cluster.local:{SC_PRIVATE_PORT}"),
@@ -557,7 +557,7 @@ mod tests {
         let sts = build_statefulset("main", "fluvio-system", 1, 0, &default_config(), None, &owner);
         let args = sts["spec"]["template"]["spec"]["containers"][0]["args"].as_array().unwrap();
         let args_str: Vec<&str> = args.iter().map(|a| a.as_str().unwrap()).collect();
-        assert!(args_str.contains(&"/fluvio-run"));
+        assert!(!args_str.contains(&"/fluvio-run"), "args should not contain binary path");
         assert!(args_str.contains(&"spu"));
         assert!(args_str.contains(&"--sc-addr"));
         assert!(args_str.iter().any(|a| a.contains("fluvio-sc-internal.fluvio-system.svc.cluster.local")));
@@ -621,5 +621,24 @@ mod tests {
         };
         let sts = build_statefulset("main", "ns", 1, 0, &config, None, &owner);
         assert_eq!(sts["spec"]["template"]["spec"]["containers"][0]["image"], "myregistry/fluvio:v1.0");
+    }
+
+    #[test]
+    fn test_build_statefulset_with_node_selector() {
+        let owner = test_owner_ref();
+        let mut config = default_config();
+        config.spu_pod_config.node_selector.insert("kubernetes.io/arch".to_string(), "arm64".to_string());
+        let sts = build_statefulset("main", "ns", 1, 0, &config, None, &owner);
+        let ns = &sts["spec"]["template"]["spec"]["nodeSelector"];
+        assert_eq!(ns["kubernetes.io/arch"], "arm64");
+    }
+
+    #[test]
+    fn test_build_statefulset_with_priority_class() {
+        let owner = test_owner_ref();
+        let mut config = default_config();
+        config.spu_pod_config.priority_class_name = Some("high-priority".to_string());
+        let sts = build_statefulset("main", "ns", 1, 0, &config, None, &owner);
+        assert_eq!(sts["spec"]["template"]["spec"]["priorityClassName"], "high-priority");
     }
 }

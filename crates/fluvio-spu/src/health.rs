@@ -254,4 +254,9 @@ mod tests {
         let response = String::from_utf8_lossy(&buf[..n]);
         assert!(response.starts_with("HTTP/1.1 200 OK"));
     }
+
+    #[test]
+    fn test_health_port_default() {
+        assert_eq!(SPU_HEALTH_PORT, 9008);
+    }
 }

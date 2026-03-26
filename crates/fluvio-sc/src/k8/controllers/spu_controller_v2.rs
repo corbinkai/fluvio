@@ -325,4 +325,12 @@ mod tests {
         assert_eq!(obj["apiVersion"], "fluvio.infinyon.com/v1");
         assert_eq!(obj["kind"], "Spu");
     }
+
+    #[test]
+    fn test_spu_id_calculation() {
+        let endpoint = IngressPort::default();
+        let obj = build_spu_object("test-2", "test", 2, 102, &endpoint, "ns", &test_owner_ref());
+        assert_eq!(obj["spec"]["spuId"], 102);
+        assert_eq!(obj["metadata"]["name"], "test-2");
+    }
 }

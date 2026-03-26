@@ -358,4 +358,55 @@ mod tests {
         config.apply_service(2, &mut svc);
         assert_eq!(svc.ports[0].node_port, Some(30002));
     }
+
+    #[test]
+    fn test_from_data_service_clusterip() {
+        let data = make_data(vec![
+            ("image", "test:latest"),
+            ("service", r#"{"type":"ClusterIP"}"#),
+        ]);
+        let config = ScK8Config::from_data(data).unwrap();
+        let svc = config.service.unwrap();
+        assert!(matches!(
+            svc.r#type,
+            Some(fluvio_stream_model::k8_types::core::service::LoadBalancerType::ClusterIP)
+        ));
+    }
+
+    #[test]
+    fn test_from_data_pod_security_context() {
+        let data = make_data(vec![
+            ("image", "test:latest"),
+            ("podSecurityContext", r#"{"runAsUser": 1000}"#),
+        ]);
+        let config = ScK8Config::from_data(data).unwrap();
+        assert!(config.pod_security_context.is_some());
+    }
+
+    #[test]
+    fn test_from_data_pod_config_defaults() {
+        let data = make_data(vec![("image", "test:latest")]);
+        let config = ScK8Config::from_data(data).unwrap();
+        assert!(config.spu_pod_config.node_selector.is_empty());
+        assert!(config.spu_pod_config.resources.is_none());
+        assert!(config.spu_pod_config.storage_class.is_none());
+        assert!(config.spu_pod_config.base_node_port.is_none());
+    }
+
+    #[test]
+    fn test_apply_service_clusterip_type() {
+        use fluvio_stream_model::k8_types::core::service::LoadBalancerType;
+        let config = ScK8Config {
+            image: "test".to_string(),
+            service: Some(ServiceSpec {
+                r#type: Some(LoadBalancerType::ClusterIP),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut svc = ServiceSpec::default();
+        config.apply_service(0, &mut svc);
+        assert!(matches!(svc.r#type, Some(LoadBalancerType::ClusterIP)));
+        assert!(svc.ports[0].node_port.is_none());
+    }
 }

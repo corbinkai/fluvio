@@ -422,3 +422,159 @@ async fn test_spugroup_delete_cascades() {
     sc.kill().ok();
     sc.wait().ok();
 }
+
+#[tokio::test]
+#[ignore]
+async fn test_spugroup_scale_up() {
+    rustls::crypto::ring::default_provider().install_default().ok();
+    let client = make_client().await;
+    let mut sc = start_sc();
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
+    create_spugroup(&client, "integ-scale", 1, 800).await;
+    wait_for_services(&client, "integ-scale", 1, Duration::from_secs(15)).await;
+
+    // Scale up to 3
+    create_spugroup(&client, "integ-scale", 3, 800).await;
+    wait_for_services(&client, "integ-scale", 3, Duration::from_secs(15)).await;
+
+    delete_spugroup(&client, "integ-scale").await;
+    sc.kill().ok();
+    sc.wait().ok();
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_spugroup_scale_down() {
+    rustls::crypto::ring::default_provider().install_default().ok();
+    let client = make_client().await;
+    let mut sc = start_sc();
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
+    create_spugroup(&client, "integ-sdown", 3, 900).await;
+    wait_for_services(&client, "integ-sdown", 3, Duration::from_secs(15)).await;
+
+    // Scale down to 1
+    create_spugroup(&client, "integ-sdown", 1, 900).await;
+    tokio::time::sleep(Duration::from_secs(10)).await;
+
+    let services: Api<Service> = Api::namespaced(client.clone(), NAMESPACE);
+    let svc_list = services.list(&ListParams::default().labels("fluvio.io/spu-name")).await.unwrap();
+    let matching: Vec<_> = svc_list.items.iter()
+        .filter(|s| s.name_any().starts_with("fluvio-spu-integ-sdown-"))
+        .collect();
+    assert!(matching.len() <= 1, "expected <=1 service after scale-down, got {}", matching.len());
+
+    delete_spugroup(&client, "integ-sdown").await;
+    sc.kill().ok();
+    sc.wait().ok();
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_spugroup_status_reserved() {
+    rustls::crypto::ring::default_provider().install_default().ok();
+    let client = make_client().await;
+    let mut sc = start_sc();
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
+    create_spugroup(&client, "integ-status", 1, 1000).await;
+    tokio::time::sleep(Duration::from_secs(10)).await;
+
+    let spg = spg_api(&client).get("integ-status").await.unwrap();
+    let resolution = spg.data.get("status")
+        .and_then(|s| s.get("resolution"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    assert_eq!(resolution, "Reserved", "SpuGroup status should be Reserved, got {resolution}");
+
+    delete_spugroup(&client, "integ-status").await;
+    sc.kill().ok();
+    sc.wait().ok();
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_spu_owner_ref_points_to_spugroup() {
+    rustls::crypto::ring::default_provider().install_default().ok();
+    let client = make_client().await;
+    let mut sc = start_sc();
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
+    create_spugroup(&client, "integ-oref", 1, 1200).await;
+    let spus = wait_for_spus(&client, "integ-oref", 1, Duration::from_secs(15)).await;
+
+    let owner_refs = spus[0].metadata.owner_references.as_deref().unwrap_or_default();
+    assert!(!owner_refs.is_empty(), "SPU should have owner references");
+    assert_eq!(owner_refs[0].kind, "SpuGroup");
+    assert_eq!(owner_refs[0].name, "integ-oref");
+
+    delete_spugroup(&client, "integ-oref").await;
+    sc.kill().ok();
+    sc.wait().ok();
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_configmap_missing_uses_defaults() {
+    rustls::crypto::ring::default_provider().install_default().ok();
+    let client = make_client().await;
+    let mut sc = start_sc();
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
+    create_spugroup(&client, "integ-noconf", 1, 1300).await;
+    let services = wait_for_services(&client, "integ-noconf", 1, Duration::from_secs(15)).await;
+    let ports = services[0].spec.as_ref().unwrap().ports.as_ref().unwrap();
+    assert_eq!(ports[0].port, 9005);
+
+    delete_spugroup(&client, "integ-noconf").await;
+    sc.kill().ok();
+    sc.wait().ok();
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_statefulset_has_probes() {
+    rustls::crypto::ring::default_provider().install_default().ok();
+    let client = make_client().await;
+    let mut sc = start_sc();
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
+    create_spugroup(&client, "integ-probe", 1, 1400).await;
+    let sts = wait_for_statefulset(&client, "fluvio-spg-integ-probe", Duration::from_secs(15)).await;
+
+    let containers = &sts.spec.as_ref().unwrap().template.spec.as_ref().unwrap().containers;
+    let spu_container = &containers[0];
+    assert!(spu_container.liveness_probe.is_some(), "liveness probe missing");
+    assert!(spu_container.readiness_probe.is_some(), "readiness probe missing");
+
+    let readiness = spu_container.readiness_probe.as_ref().unwrap();
+    let http_get = readiness.http_get.as_ref().expect("readiness should use httpGet");
+    assert_eq!(http_get.path.as_deref(), Some("/readyz"));
+
+    delete_spugroup(&client, "integ-probe").await;
+    sc.kill().ok();
+    sc.wait().ok();
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_service_selector_matches_pod() {
+    rustls::crypto::ring::default_provider().install_default().ok();
+    let client = make_client().await;
+    let mut sc = start_sc();
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
+    create_spugroup(&client, "integ-sel", 1, 1500).await;
+    let services = wait_for_services(&client, "integ-sel", 1, Duration::from_secs(15)).await;
+
+    let selector = services[0].spec.as_ref().unwrap().selector.as_ref().unwrap();
+    assert_eq!(
+        selector.get("statefulset.kubernetes.io/pod-name"),
+        Some(&"fluvio-spg-integ-sel-0".to_string())
+    );
+
+    delete_spugroup(&client, "integ-sel").await;
+    sc.kill().ok();
+    sc.wait().ok();
+}
