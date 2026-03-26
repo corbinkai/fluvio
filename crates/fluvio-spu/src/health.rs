@@ -106,3 +106,152 @@ pub fn start_health_server(health: Arc<HealthState>) {
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+
+    #[test]
+    fn test_health_state_defaults_not_ready() {
+        let state = HealthState::new();
+        assert!(!state.is_ready());
+    }
+
+    #[test]
+    fn test_health_state_ready_when_both_set() {
+        let state = HealthState::new();
+        state.set_sc_connected(true);
+        state.set_storage_ready(true);
+        assert!(state.is_ready());
+    }
+
+    #[test]
+    fn test_health_state_not_ready_sc_disconnected() {
+        let state = HealthState::new();
+        state.set_sc_connected(false);
+        state.set_storage_ready(true);
+        assert!(!state.is_ready());
+    }
+
+    #[test]
+    fn test_health_state_not_ready_storage_not_ready() {
+        let state = HealthState::new();
+        state.set_sc_connected(true);
+        state.set_storage_ready(false);
+        assert!(!state.is_ready());
+    }
+
+    #[test]
+    fn test_shutdown_event_registration() {
+        let state = HealthState::new();
+        let event1 = StickyEvent::shared();
+        let event2 = StickyEvent::shared();
+        state.register_shutdown_event(event1);
+        state.register_shutdown_event(event2);
+        assert_eq!(state.shutdown_events.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_trigger_shutdown_notifies_all_events() {
+        let state = HealthState::new();
+        let event1 = StickyEvent::shared();
+        let event2 = StickyEvent::shared();
+        state.register_shutdown_event(event1.clone());
+        state.register_shutdown_event(event2.clone());
+        state.trigger_shutdown();
+        assert!(event1.is_set());
+        assert!(event2.is_set());
+    }
+
+    #[tokio::test]
+    async fn test_healthz_returns_200() {
+        let health = Arc::new(HealthState::new());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let health_clone = health.clone();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 512];
+            let _ = stream.read(&mut buf).await;
+            let request = String::from_utf8_lossy(&buf);
+            let response = if request.starts_with("GET /readyz") {
+                if health_clone.is_ready() { HTTP_200 } else { HTTP_503 }
+            } else {
+                HTTP_200
+            };
+            let _ = stream.write_all(response).await;
+            let _ = stream.shutdown().await;
+        });
+
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        stream.write_all(b"GET /healthz HTTP/1.1\r\n\r\n").await.unwrap();
+        let mut buf = vec![0u8; 256];
+        let n = stream.read(&mut buf).await.unwrap();
+        let response = String::from_utf8_lossy(&buf[..n]);
+        assert!(response.starts_with("HTTP/1.1 200 OK"));
+    }
+
+    #[tokio::test]
+    async fn test_readyz_returns_503_when_not_ready() {
+        let health = Arc::new(HealthState::new());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let health_clone = health.clone();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 512];
+            let _ = stream.read(&mut buf).await;
+            let request = String::from_utf8_lossy(&buf);
+            let response = if request.starts_with("GET /readyz") {
+                if health_clone.is_ready() { HTTP_200 } else { HTTP_503 }
+            } else {
+                HTTP_200
+            };
+            let _ = stream.write_all(response).await;
+            let _ = stream.shutdown().await;
+        });
+
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        stream.write_all(b"GET /readyz HTTP/1.1\r\n\r\n").await.unwrap();
+        let mut buf = vec![0u8; 256];
+        let n = stream.read(&mut buf).await.unwrap();
+        let response = String::from_utf8_lossy(&buf[..n]);
+        assert!(response.starts_with("HTTP/1.1 503"));
+    }
+
+    #[tokio::test]
+    async fn test_readyz_returns_200_when_ready() {
+        let health = Arc::new(HealthState::new());
+        health.set_sc_connected(true);
+        health.set_storage_ready(true);
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let health_clone = health.clone();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 512];
+            let _ = stream.read(&mut buf).await;
+            let request = String::from_utf8_lossy(&buf);
+            let response = if request.starts_with("GET /readyz") {
+                if health_clone.is_ready() { HTTP_200 } else { HTTP_503 }
+            } else {
+                HTTP_200
+            };
+            let _ = stream.write_all(response).await;
+            let _ = stream.shutdown().await;
+        });
+
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        stream.write_all(b"GET /readyz HTTP/1.1\r\n\r\n").await.unwrap();
+        let mut buf = vec![0u8; 256];
+        let n = stream.read(&mut buf).await.unwrap();
+        let response = String::from_utf8_lossy(&buf[..n]);
+        assert!(response.starts_with("HTTP/1.1 200 OK"));
+    }
+}

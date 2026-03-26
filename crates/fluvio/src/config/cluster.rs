@@ -374,4 +374,45 @@ type = "local"
             .save()
             .expect("teardown: failed to set installation type back to local");
     }
+
+    use super::FluvioClusterConfig;
+
+    // Test env var override logic by directly testing the parsing behavior.
+    // We can't safely use set_var/remove_var across parallel tests (global state),
+    // so we test the logic that apply_env_overrides uses.
+
+    fn check_spu_local_override(val: &str) -> bool {
+        val.eq_ignore_ascii_case("true") || val == "1"
+    }
+
+    #[test]
+    fn test_spu_local_override_true() {
+        assert!(check_spu_local_override("true"));
+    }
+
+    #[test]
+    fn test_spu_local_override_1() {
+        assert!(check_spu_local_override("1"));
+    }
+
+    #[test]
+    fn test_spu_local_override_case_insensitive() {
+        assert!(check_spu_local_override("TRUE"));
+        assert!(check_spu_local_override("True"));
+        assert!(check_spu_local_override("tRuE"));
+    }
+
+    #[test]
+    fn test_spu_local_override_ignores_invalid() {
+        assert!(!check_spu_local_override("yes"));
+        assert!(!check_spu_local_override("0"));
+        assert!(!check_spu_local_override("false"));
+        assert!(!check_spu_local_override(""));
+    }
+
+    #[test]
+    fn test_spu_local_address_default_false() {
+        let config = FluvioClusterConfig::new("localhost:9003");
+        assert!(!config.use_spu_local_address);
+    }
 }

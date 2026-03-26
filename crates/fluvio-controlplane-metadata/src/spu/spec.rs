@@ -456,3 +456,99 @@ impl Decoder for CustomSpu {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ingress_port_host_returns_none_when_empty() {
+        let port = IngressPort {
+            port: 9005,
+            ingress: vec![],
+            ..Default::default()
+        };
+        assert_eq!(port.host(), None);
+    }
+
+    #[test]
+    fn test_ingress_port_host_returns_first_hostname() {
+        let port = IngressPort {
+            port: 9005,
+            ingress: vec![IngressAddr {
+                hostname: Some("spu-0.ns.svc.cluster.local".to_string()),
+                ip: None,
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            port.host(),
+            Some("spu-0.ns.svc.cluster.local".to_string())
+        );
+    }
+
+    #[test]
+    fn test_ingress_port_host_returns_first_ip() {
+        let port = IngressPort {
+            port: 9005,
+            ingress: vec![IngressAddr {
+                hostname: None,
+                ip: Some("10.0.0.1".to_string()),
+            }],
+            ..Default::default()
+        };
+        assert_eq!(port.host(), Some("10.0.0.1".to_string()));
+    }
+
+    #[test]
+    fn test_ingress_port_addr_with_host() {
+        let port = IngressPort {
+            port: 9005,
+            ingress: vec![IngressAddr::from_host("myhost".to_string())],
+            ..Default::default()
+        };
+        assert_eq!(port.addr(), "myhost:9005");
+    }
+
+    #[test]
+    fn test_ingress_port_addr_without_host() {
+        let port = IngressPort {
+            port: 9005,
+            ingress: vec![],
+            ..Default::default()
+        };
+        assert_eq!(port.addr(), ":9005");
+    }
+
+    #[test]
+    fn test_ingress_addr_host_prefers_hostname() {
+        let addr = IngressAddr {
+            hostname: Some("myhost".to_string()),
+            ip: Some("10.0.0.1".to_string()),
+        };
+        assert_eq!(addr.host(), Some("myhost".to_string()));
+    }
+
+    #[test]
+    fn test_ingress_addr_host_falls_back_to_ip() {
+        let addr = IngressAddr {
+            hostname: None,
+            ip: Some("10.0.0.1".to_string()),
+        };
+        assert_eq!(addr.host(), Some("10.0.0.1".to_string()));
+    }
+
+    #[test]
+    fn test_ingress_addr_from_host() {
+        let addr = IngressAddr::from_host("foo.local".to_string());
+        assert_eq!(addr.hostname, Some("foo.local".to_string()));
+        assert_eq!(addr.ip, None);
+    }
+
+    #[test]
+    fn test_ingress_addr_from_ip() {
+        let addr = IngressAddr::from_ip("192.168.1.1".to_string());
+        assert_eq!(addr.hostname, None);
+        assert_eq!(addr.ip, Some("192.168.1.1".to_string()));
+    }
+}

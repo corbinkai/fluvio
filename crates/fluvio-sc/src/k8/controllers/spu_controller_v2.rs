@@ -116,58 +116,11 @@ async fn reconcile(
     for i in 0..replicas {
         let spu_id = min_id + i as i32;
         let spu_name = format!("{spg_name}-{i}");
-
-        // Get ingress from the per-SPU service
         let public_endpoint = services.get(&spu_name).cloned().unwrap_or_default();
 
-        let public_svc_fqdn = format!(
-            "fluvio-spu-{spu_name}.{spg_ns}.svc.cluster.local"
+        let spu_obj = build_spu_object(
+            &spu_name, &spg_name, i, spu_id, &public_endpoint, &spg_ns, &owner_ref,
         );
-        let private_svc_fqdn = format!(
-            "fluvio-spg-main-{i}.fluvio-spg-{spg_name}.{spg_ns}.svc.cluster.local"
-        );
-
-        // Build SPU spec as JSON for server-side apply
-        let ingress_entries: Vec<serde_json::Value> = public_endpoint
-            .ingress
-            .iter()
-            .map(|addr| {
-                let mut entry = serde_json::Map::new();
-                if let Some(ref hostname) = addr.hostname {
-                    entry.insert("hostname".into(), serde_json::json!(hostname));
-                }
-                if let Some(ref ip) = addr.ip {
-                    entry.insert("ip".into(), serde_json::json!(ip));
-                }
-                serde_json::Value::Object(entry)
-            })
-            .collect();
-
-        let spu_obj = serde_json::json!({
-            "apiVersion": format!("{SPG_GROUP}/{SPG_VERSION}"),
-            "kind": SPU_KIND,
-            "metadata": {
-                "name": spu_name,
-                "namespace": spg_ns,
-                "ownerReferences": [owner_ref],
-            },
-            "spec": {
-                "spuId": spu_id,
-                "spuType": "Managed",
-                "publicEndpoint": {
-                    "port": public_endpoint.port,
-                    "ingress": ingress_entries,
-                },
-                "privateEndpoint": {
-                    "host": private_svc_fqdn,
-                    "port": SPU_PRIVATE_PORT,
-                },
-                "publicEndpointLocal": {
-                    "host": public_svc_fqdn,
-                    "port": SPU_PUBLIC_PORT,
-                },
-            }
-        });
 
         debug!(%spu_name, spu_id, "applying SPU CRD");
         spu_api
@@ -218,4 +171,158 @@ fn error_policy(
 ) -> Action {
     error!(%err, "spu controller reconciliation error, retrying in 30s");
     Action::requeue(Duration::from_secs(30))
+}
+
+fn build_spu_object(
+    spu_name: &str,
+    spg_name: &str,
+    replica_index: u16,
+    spu_id: i32,
+    public_endpoint: &fluvio_controlplane_metadata::spu::IngressPort,
+    namespace: &str,
+    owner_ref: &k8s_openapi::apimachinery::pkg::apis::meta::v1::OwnerReference,
+) -> serde_json::Value {
+    use crate::stores::spu::IngressAddr;
+
+    let public_svc_fqdn = format!("fluvio-spu-{spu_name}.{namespace}.svc.cluster.local");
+    let private_svc_fqdn = format!(
+        "fluvio-spg-main-{replica_index}.fluvio-spg-{spg_name}.{namespace}.svc.cluster.local"
+    );
+
+    let ingress_entries: Vec<serde_json::Value> = public_endpoint
+        .ingress
+        .iter()
+        .map(|addr| {
+            let mut entry = serde_json::Map::new();
+            if let Some(ref hostname) = addr.hostname {
+                entry.insert("hostname".into(), serde_json::json!(hostname));
+            }
+            if let Some(ref ip) = addr.ip {
+                entry.insert("ip".into(), serde_json::json!(ip));
+            }
+            serde_json::Value::Object(entry)
+        })
+        .collect();
+
+    serde_json::json!({
+        "apiVersion": format!("{SPG_GROUP}/{SPG_VERSION}"),
+        "kind": SPU_KIND,
+        "metadata": {
+            "name": spu_name,
+            "namespace": namespace,
+            "ownerReferences": [owner_ref],
+        },
+        "spec": {
+            "spuId": spu_id,
+            "spuType": "Managed",
+            "publicEndpoint": {
+                "port": public_endpoint.port,
+                "ingress": ingress_entries,
+            },
+            "privateEndpoint": {
+                "host": private_svc_fqdn,
+                "port": SPU_PRIVATE_PORT,
+            },
+            "publicEndpointLocal": {
+                "host": public_svc_fqdn,
+                "port": SPU_PUBLIC_PORT,
+            },
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fluvio_controlplane_metadata::spu::IngressPort;
+    use crate::stores::spu::IngressAddr;
+
+    fn test_owner_ref() -> k8s_openapi::apimachinery::pkg::apis::meta::v1::OwnerReference {
+        k8s_openapi::apimachinery::pkg::apis::meta::v1::OwnerReference {
+            api_version: "fluvio.infinyon.com/v1".to_string(),
+            kind: "SpuGroup".to_string(),
+            name: "main".to_string(),
+            uid: "uid-123".to_string(),
+            controller: Some(true),
+            block_owner_deletion: Some(true),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_spu_object_has_correct_spec_fields() {
+        let endpoint = IngressPort::default();
+        let obj = build_spu_object("main-0", "main", 0, 5, &endpoint, "ns", &test_owner_ref());
+        assert_eq!(obj["spec"]["spuId"], 5);
+        assert_eq!(obj["spec"]["spuType"], "Managed");
+        assert!(obj["spec"]["publicEndpoint"].is_object());
+        assert!(obj["spec"]["privateEndpoint"].is_object());
+        assert!(obj["spec"]["publicEndpointLocal"].is_object());
+    }
+
+    #[test]
+    fn test_spu_private_endpoint_fqdn() {
+        let endpoint = IngressPort::default();
+        let obj = build_spu_object("main-1", "main", 1, 1, &endpoint, "fluvio-system", &test_owner_ref());
+        assert_eq!(
+            obj["spec"]["privateEndpoint"]["host"],
+            "fluvio-spg-main-1.fluvio-spg-main.fluvio-system.svc.cluster.local"
+        );
+        assert_eq!(obj["spec"]["privateEndpoint"]["port"], SPU_PRIVATE_PORT);
+    }
+
+    #[test]
+    fn test_spu_public_endpoint_local_fqdn() {
+        let endpoint = IngressPort::default();
+        let obj = build_spu_object("main-0", "main", 0, 0, &endpoint, "fluvio-system", &test_owner_ref());
+        assert_eq!(
+            obj["spec"]["publicEndpointLocal"]["host"],
+            "fluvio-spu-main-0.fluvio-system.svc.cluster.local"
+        );
+        assert_eq!(obj["spec"]["publicEndpointLocal"]["port"], SPU_PUBLIC_PORT);
+    }
+
+    #[test]
+    fn test_spu_public_endpoint_from_service_ingress() {
+        let endpoint = IngressPort {
+            port: 9005,
+            ingress: vec![IngressAddr {
+                hostname: Some("lb.example.com".to_string()),
+                ip: None,
+            }],
+            ..Default::default()
+        };
+        let obj = build_spu_object("main-0", "main", 0, 0, &endpoint, "ns", &test_owner_ref());
+        assert_eq!(obj["spec"]["publicEndpoint"]["port"], 9005);
+        let ingress = obj["spec"]["publicEndpoint"]["ingress"].as_array().unwrap();
+        assert_eq!(ingress[0]["hostname"], "lb.example.com");
+    }
+
+    #[test]
+    fn test_spu_public_endpoint_empty_when_no_service() {
+        let endpoint = IngressPort::default();
+        let obj = build_spu_object("main-0", "main", 0, 0, &endpoint, "ns", &test_owner_ref());
+        let ingress = obj["spec"]["publicEndpoint"]["ingress"].as_array().unwrap();
+        assert!(ingress.is_empty());
+    }
+
+    #[test]
+    fn test_spu_owner_reference() {
+        let endpoint = IngressPort::default();
+        let obj = build_spu_object("main-0", "main", 0, 0, &endpoint, "ns", &test_owner_ref());
+        let refs = obj["metadata"]["ownerReferences"].as_array().unwrap();
+        assert_eq!(refs[0]["name"], "main");
+        assert_eq!(refs[0]["uid"], "uid-123");
+        assert_eq!(refs[0]["kind"], "SpuGroup");
+    }
+
+    #[test]
+    fn test_spu_metadata() {
+        let endpoint = IngressPort::default();
+        let obj = build_spu_object("main-0", "main", 0, 0, &endpoint, "fluvio-system", &test_owner_ref());
+        assert_eq!(obj["metadata"]["name"], "main-0");
+        assert_eq!(obj["metadata"]["namespace"], "fluvio-system");
+        assert_eq!(obj["apiVersion"], "fluvio.infinyon.com/v1");
+        assert_eq!(obj["kind"], "Spu");
+    }
 }

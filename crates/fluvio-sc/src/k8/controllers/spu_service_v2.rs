@@ -266,6 +266,145 @@ fn build_spu_service(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::super::objects::spu_k8_config::PodConfig;
+    use fluvio_stream_model::k8_types::core::service::{
+        ServiceSpec as K8TypesServiceSpec, LoadBalancerType,
+    };
+
+    fn make_spg(name: &str, uid: &str) -> DynamicObject {
+        DynamicObject {
+            metadata: kube::api::ObjectMeta {
+                name: Some(name.to_string()),
+                namespace: Some("fluvio-system".to_string()),
+                uid: Some(uid.to_string()),
+                ..Default::default()
+            },
+            types: None,
+            data: serde_json::json!({
+                "spec": { "replicas": 2, "minId": 0 }
+            }),
+        }
+    }
+
+    fn default_config() -> ScK8Config {
+        ScK8Config {
+            image: "test:latest".to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_build_spu_service_basic() {
+        let spg = make_spg("main", "uid-123");
+        let svc = build_spu_service(0, "main-0", &spg, &default_config(), "fluvio-system");
+        assert_eq!(svc.metadata.name, Some("fluvio-spu-main-0".to_string()));
+        assert_eq!(svc.metadata.namespace, Some("fluvio-system".to_string()));
+        let labels = svc.metadata.labels.unwrap();
+        assert_eq!(labels.get("fluvio.io/spu-name"), Some(&"main-0".to_string()));
+        let selector = svc.spec.as_ref().unwrap().selector.as_ref().unwrap();
+        assert_eq!(
+            selector.get("statefulset.kubernetes.io/pod-name"),
+            Some(&"fluvio-spg-main-0".to_string())
+        );
+    }
+
+    #[test]
+    fn test_build_spu_service_port() {
+        let spg = make_spg("main", "uid-123");
+        let svc = build_spu_service(0, "main-0", &spg, &default_config(), "ns");
+        let ports = svc.spec.as_ref().unwrap().ports.as_ref().unwrap();
+        assert_eq!(ports[0].port, SPU_PUBLIC_PORT as i32);
+        assert_eq!(ports[0].target_port, Some(IntOrString::Int(SPU_PUBLIC_PORT as i32)));
+    }
+
+    #[test]
+    fn test_build_spu_service_owner_ref() {
+        let spg = make_spg("main", "uid-abc");
+        let svc = build_spu_service(0, "main-0", &spg, &default_config(), "ns");
+        let refs = svc.metadata.owner_references.unwrap();
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].name, "main");
+        assert_eq!(refs[0].uid, "uid-abc");
+        assert_eq!(refs[0].kind, "SpuGroup");
+        assert_eq!(refs[0].controller, Some(true));
+    }
+
+    #[test]
+    fn test_build_spu_service_annotation_templating() {
+        let spg = make_spg("main", "uid");
+        let mut config = default_config();
+        config.lb_service_annotations.insert(
+            "fluvio.io/ingress-address".to_string(),
+            "fluvio-spu-{spu_name}.ns.svc".to_string(),
+        );
+        let svc = build_spu_service(1, "main-1", &spg, &config, "ns");
+        let annotations = svc.metadata.annotations.unwrap();
+        assert_eq!(
+            annotations.get("fluvio.io/ingress-address"),
+            Some(&"fluvio-spu-main-1.ns.svc".to_string())
+        );
+    }
+
+    #[test]
+    fn test_build_spu_service_replica_templating() {
+        let spg = make_spg("main", "uid");
+        let mut config = default_config();
+        config.lb_service_annotations.insert(
+            "test".to_string(),
+            "replica-{replica}".to_string(),
+        );
+        let svc = build_spu_service(2, "main-2", &spg, &config, "ns");
+        let annotations = svc.metadata.annotations.unwrap();
+        assert_eq!(annotations.get("test"), Some(&"replica-2".to_string()));
+    }
+
+    #[test]
+    fn test_build_spu_service_nodeport() {
+        let spg = make_spg("main", "uid");
+        let config = ScK8Config {
+            image: "test:latest".to_string(),
+            service: Some(K8TypesServiceSpec {
+                r#type: Some(LoadBalancerType::NodePort),
+                ..Default::default()
+            }),
+            spu_pod_config: PodConfig {
+                base_node_port: Some(30000),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let svc = build_spu_service(1, "main-1", &spg, &config, "ns");
+        assert_eq!(svc.spec.as_ref().unwrap().type_, Some("NodePort".to_string()));
+        let ports = svc.spec.as_ref().unwrap().ports.as_ref().unwrap();
+        assert_eq!(ports[0].node_port, Some(30001));
+    }
+
+    #[test]
+    fn test_build_spu_service_clusterip() {
+        let spg = make_spg("main", "uid");
+        let config = ScK8Config {
+            image: "test:latest".to_string(),
+            service: Some(K8TypesServiceSpec {
+                r#type: Some(LoadBalancerType::ClusterIP),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let svc = build_spu_service(0, "main-0", &spg, &config, "ns");
+        assert_eq!(svc.spec.as_ref().unwrap().type_, Some("ClusterIP".to_string()));
+    }
+
+    #[test]
+    fn test_build_spu_service_no_annotations_when_empty() {
+        let spg = make_spg("main", "uid");
+        let svc = build_spu_service(0, "main-0", &spg, &default_config(), "ns");
+        assert!(svc.metadata.annotations.is_none());
+    }
+}
+
 pub async fn load_spu_k8_config(client: &Client, namespace: &str) -> Result<ScK8Config> {
     let configmaps: Api<ConfigMap> = Api::namespaced(client.clone(), namespace);
     match configmaps.get("spu-k8").await {

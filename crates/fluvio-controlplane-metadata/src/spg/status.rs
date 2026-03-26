@@ -69,3 +69,44 @@ impl fmt::Display for SpuGroupStatusResolution {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_spugroup_status_default_is_init() {
+        let status = SpuGroupStatus::default();
+        assert_eq!(status.resolution, SpuGroupStatusResolution::Init);
+        assert_eq!(status.reason, None);
+    }
+
+    #[test]
+    fn test_spugroup_status_invalid_has_reason() {
+        let status = SpuGroupStatus::invalid("conflict with id 5".to_string());
+        assert_eq!(status.resolution, SpuGroupStatusResolution::Invalid);
+        assert_eq!(status.reason, Some("conflict with id 5".to_string()));
+    }
+
+    #[test]
+    fn test_spugroup_status_reserved() {
+        let status = SpuGroupStatus::reserved();
+        assert_eq!(status.resolution, SpuGroupStatusResolution::Reserved);
+        assert_eq!(status.reason, None);
+    }
+
+    #[test]
+    fn test_is_already_valid_returns_true_for_reserved() {
+        assert!(SpuGroupStatus::reserved().is_already_valid());
+    }
+
+    #[test]
+    fn test_is_already_valid_returns_false_for_init() {
+        assert!(!SpuGroupStatus::default().is_already_valid());
+    }
+
+    #[test]
+    fn test_is_already_valid_returns_false_for_invalid() {
+        assert!(!SpuGroupStatus::invalid("x".to_string()).is_already_valid());
+    }
+}

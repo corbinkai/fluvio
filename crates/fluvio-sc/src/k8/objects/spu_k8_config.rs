@@ -251,3 +251,111 @@ mod extended {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn make_data(entries: Vec<(&str, &str)>) -> BTreeMap<String, String> {
+        entries.into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    #[test]
+    fn test_from_data_full_config() {
+        let data = make_data(vec![
+            ("image", "infinyon/fluvio:latest"),
+            ("lbServiceAnnotations", r#"{"key":"value"}"#),
+            ("service", r#"{"type":"NodePort"}"#),
+            ("spuPodConfig", r#"{"nodeSelector":{},"storageClass":"gp3"}"#),
+        ]);
+        let config = ScK8Config::from_data(data).unwrap();
+        assert_eq!(config.image, "infinyon/fluvio:latest");
+        assert_eq!(config.lb_service_annotations.get("key"), Some(&"value".to_string()));
+        assert!(config.service.is_some());
+        assert_eq!(config.spu_pod_config.storage_class, Some("gp3".to_string()));
+    }
+
+    #[test]
+    fn test_from_data_missing_image_fails() {
+        let data = make_data(vec![]);
+        let result = ScK8Config::from_data(data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_data_missing_optional_fields() {
+        let data = make_data(vec![("image", "test:latest")]);
+        let config = ScK8Config::from_data(data).unwrap();
+        assert_eq!(config.image, "test:latest");
+        assert!(config.lb_service_annotations.is_empty());
+        assert!(config.service.is_none());
+        assert!(config.pod_security_context.is_none());
+    }
+
+    #[test]
+    fn test_from_data_lb_annotations_parsed() {
+        let data = make_data(vec![
+            ("image", "test:latest"),
+            ("lbServiceAnnotations", r#"{"fluvio.io/ingress-address":"spu-0.ns.svc"}"#),
+        ]);
+        let config = ScK8Config::from_data(data).unwrap();
+        assert_eq!(
+            config.lb_service_annotations.get("fluvio.io/ingress-address"),
+            Some(&"spu-0.ns.svc".to_string())
+        );
+    }
+
+    #[test]
+    fn test_from_data_pod_config_storage_class() {
+        let data = make_data(vec![
+            ("image", "test:latest"),
+            ("spuPodConfig", r#"{"storageClass":"io1"}"#),
+        ]);
+        let config = ScK8Config::from_data(data).unwrap();
+        assert_eq!(config.spu_pod_config.storage_class, Some("io1".to_string()));
+    }
+
+    #[test]
+    fn test_from_data_pod_config_base_node_port() {
+        let data = make_data(vec![
+            ("image", "test:latest"),
+            ("spuPodConfig", r#"{"baseNodePort":30000}"#),
+        ]);
+        let config = ScK8Config::from_data(data).unwrap();
+        assert_eq!(config.spu_pod_config.base_node_port, Some(30000));
+    }
+
+    #[test]
+    fn test_apply_service_default_no_type() {
+        let config = ScK8Config {
+            image: "test".to_string(),
+            ..Default::default()
+        };
+        let mut svc = ServiceSpec::default();
+        config.apply_service(0, &mut svc);
+        assert_eq!(svc.ports.len(), 1);
+        assert_eq!(svc.ports[0].port, SPU_PUBLIC_PORT);
+        assert!(svc.r#type.is_none());
+    }
+
+    #[test]
+    fn test_apply_service_nodeport_with_base() {
+        use fluvio_stream_model::k8_types::core::service::LoadBalancerType;
+        let config = ScK8Config {
+            image: "test".to_string(),
+            service: Some(ServiceSpec {
+                r#type: Some(LoadBalancerType::NodePort),
+                ..Default::default()
+            }),
+            spu_pod_config: PodConfig {
+                base_node_port: Some(30000),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut svc = ServiceSpec::default();
+        config.apply_service(2, &mut svc);
+        assert_eq!(svc.ports[0].node_port, Some(30002));
+    }
+}

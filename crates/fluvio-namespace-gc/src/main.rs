@@ -157,3 +157,68 @@ fn error_policy(_obj: Arc<Namespace>, err: &kube::Error, _ctx: Arc<Context>) -> 
     error!(%err, "reconciliation error, retrying in 30s");
     Action::requeue(std::time::Duration::from_secs(30))
 }
+
+fn build_label_selector(ns_name: &str) -> String {
+    format!("{SOURCE_NAMESPACE_LABEL}={ns_name}")
+}
+
+fn is_namespace_being_deleted(ns: &Namespace) -> bool {
+    ns.metadata.deletion_timestamp.is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
+
+    #[test]
+    fn test_label_selector_format() {
+        let selector = build_label_selector("customer-ns");
+        assert_eq!(selector, "fluvio.io/source-namespace=customer-ns");
+    }
+
+    #[test]
+    fn test_label_selector_with_special_chars() {
+        let selector = build_label_selector("my-namespace-123");
+        assert_eq!(selector, "fluvio.io/source-namespace=my-namespace-123");
+    }
+
+    #[test]
+    fn test_namespace_not_being_deleted() {
+        let ns = Namespace {
+            metadata: ObjectMeta {
+                name: Some("test-ns".to_string()),
+                deletion_timestamp: None,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(!is_namespace_being_deleted(&ns));
+    }
+
+    #[test]
+    fn test_namespace_being_deleted() {
+        // Use serde to construct a Time value without importing chrono
+        let meta: ObjectMeta = serde_json::from_value(serde_json::json!({
+            "name": "test-ns",
+            "deletionTimestamp": "2024-01-01T00:00:00Z"
+        })).unwrap();
+        let ns = Namespace {
+            metadata: meta,
+            ..Default::default()
+        };
+        assert!(is_namespace_being_deleted(&ns));
+    }
+
+    #[test]
+    fn test_source_namespace_label_constant() {
+        assert_eq!(SOURCE_NAMESPACE_LABEL, "fluvio.io/source-namespace");
+    }
+
+    #[test]
+    fn test_topic_crd_definition() {
+        // Verify the TopicSpec CRD derives correctly
+        let topic = Topic::new("test-topic", TopicSpec { replicas: serde_json::Value::Null });
+        assert_eq!(topic.metadata.name, Some("test-topic".to_string()));
+    }
+}

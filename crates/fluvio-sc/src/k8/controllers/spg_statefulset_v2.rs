@@ -466,3 +466,160 @@ fn build_statefulset(
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_owner_ref() -> OwnerReference {
+        OwnerReference {
+            api_version: "fluvio.infinyon.com/v1".to_string(),
+            kind: "SpuGroup".to_string(),
+            name: "main".to_string(),
+            uid: "test-uid".to_string(),
+            controller: Some(true),
+            block_owner_deletion: Some(true),
+            ..Default::default()
+        }
+    }
+
+    fn default_config() -> ScK8Config {
+        ScK8Config {
+            image: "infinyon/fluvio:latest".to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_build_headless_service() {
+        let owner = test_owner_ref();
+        let svc = build_headless_service("main", "fluvio-system", &owner);
+        assert_eq!(svc["metadata"]["name"], "fluvio-spg-main");
+        assert_eq!(svc["metadata"]["namespace"], "fluvio-system");
+        assert_eq!(svc["spec"]["clusterIP"], "None");
+        assert_eq!(svc["spec"]["selector"]["app"], SPU_DEFAULT_NAME);
+        assert_eq!(svc["spec"]["selector"]["group"], "main");
+        let ports = svc["spec"]["ports"].as_array().unwrap();
+        assert_eq!(ports.len(), 2);
+        assert_eq!(ports[0]["name"], "public");
+        assert_eq!(ports[0]["port"], SPU_PUBLIC_PORT);
+        assert_eq!(ports[1]["name"], "private");
+        assert_eq!(ports[1]["port"], SPU_PRIVATE_PORT);
+    }
+
+    #[test]
+    fn test_build_headless_service_owner_ref() {
+        let owner = test_owner_ref();
+        let svc = build_headless_service("main", "ns", &owner);
+        let refs = svc["metadata"]["ownerReferences"].as_array().unwrap();
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0]["name"], "main");
+        assert_eq!(refs[0]["uid"], "test-uid");
+    }
+
+    #[test]
+    fn test_build_statefulset_basic() {
+        let owner = test_owner_ref();
+        let sts = build_statefulset("main", "fluvio-system", 2, 0, &default_config(), None, &owner);
+        assert_eq!(sts["metadata"]["name"], "fluvio-spg-main");
+        assert_eq!(sts["spec"]["replicas"], 2);
+        assert_eq!(sts["spec"]["serviceName"], "fluvio-spg-main");
+        assert_eq!(sts["spec"]["selector"]["matchLabels"]["app"], SPU_DEFAULT_NAME);
+        assert_eq!(sts["spec"]["selector"]["matchLabels"]["group"], "main");
+    }
+
+    #[test]
+    fn test_build_statefulset_container_ports() {
+        let owner = test_owner_ref();
+        let sts = build_statefulset("main", "ns", 1, 0, &default_config(), None, &owner);
+        let ports = sts["spec"]["template"]["spec"]["containers"][0]["ports"].as_array().unwrap();
+        assert_eq!(ports.len(), 3);
+        let port_names: Vec<&str> = ports.iter().map(|p| p["name"].as_str().unwrap()).collect();
+        assert!(port_names.contains(&"public"));
+        assert!(port_names.contains(&"private"));
+        assert!(port_names.contains(&"health"));
+    }
+
+    #[test]
+    fn test_build_statefulset_env_vars() {
+        let owner = test_owner_ref();
+        let sts = build_statefulset("main", "ns", 1, 5, &default_config(), None, &owner);
+        let env = sts["spec"]["template"]["spec"]["containers"][0]["env"].as_array().unwrap();
+        let spu_index = env.iter().find(|e| e["name"] == "SPU_INDEX").unwrap();
+        assert!(spu_index["valueFrom"]["fieldRef"]["fieldPath"] == "metadata.name");
+        let spu_min = env.iter().find(|e| e["name"] == "SPU_MIN").unwrap();
+        assert_eq!(spu_min["value"], "5");
+    }
+
+    #[test]
+    fn test_build_statefulset_args() {
+        let owner = test_owner_ref();
+        let sts = build_statefulset("main", "fluvio-system", 1, 0, &default_config(), None, &owner);
+        let args = sts["spec"]["template"]["spec"]["containers"][0]["args"].as_array().unwrap();
+        let args_str: Vec<&str> = args.iter().map(|a| a.as_str().unwrap()).collect();
+        assert!(args_str.contains(&"/fluvio-run"));
+        assert!(args_str.contains(&"spu"));
+        assert!(args_str.contains(&"--sc-addr"));
+        assert!(args_str.iter().any(|a| a.contains("fluvio-sc-internal.fluvio-system.svc.cluster.local")));
+    }
+
+    #[test]
+    fn test_build_statefulset_liveness_probe() {
+        let owner = test_owner_ref();
+        let sts = build_statefulset("main", "ns", 1, 0, &default_config(), None, &owner);
+        let probe = &sts["spec"]["template"]["spec"]["containers"][0]["livenessProbe"];
+        assert_eq!(probe["tcpSocket"]["port"], 9008);
+        assert_eq!(probe["initialDelaySeconds"], 5);
+        assert_eq!(probe["periodSeconds"], 10);
+    }
+
+    #[test]
+    fn test_build_statefulset_readiness_probe() {
+        let owner = test_owner_ref();
+        let sts = build_statefulset("main", "ns", 1, 0, &default_config(), None, &owner);
+        let probe = &sts["spec"]["template"]["spec"]["containers"][0]["readinessProbe"];
+        assert_eq!(probe["httpGet"]["path"], "/readyz");
+        assert_eq!(probe["httpGet"]["port"], 9008);
+    }
+
+    #[test]
+    fn test_build_statefulset_pvc() {
+        let owner = test_owner_ref();
+        let sts = build_statefulset("main", "ns", 1, 0, &default_config(), None, &owner);
+        let claims = sts["spec"]["volumeClaimTemplates"].as_array().unwrap();
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0]["metadata"]["name"], "data");
+        let modes = claims[0]["spec"]["accessModes"].as_array().unwrap();
+        assert_eq!(modes[0], "ReadWriteOnce");
+    }
+
+    #[test]
+    fn test_build_statefulset_owner_ref() {
+        let owner = test_owner_ref();
+        let sts = build_statefulset("main", "ns", 1, 0, &default_config(), None, &owner);
+        let refs = sts["metadata"]["ownerReferences"].as_array().unwrap();
+        assert_eq!(refs[0]["name"], "main");
+        assert_eq!(refs[0]["uid"], "test-uid");
+    }
+
+    // TLS test skipped — TlsConfig has private fields (tls, bind_non_tls_public)
+    // and can't be constructed in tests. TLS path is covered by k3d integration tests.
+
+    #[test]
+    fn test_build_statefulset_termination_grace_period() {
+        let owner = test_owner_ref();
+        let sts = build_statefulset("main", "ns", 1, 0, &default_config(), None, &owner);
+        assert_eq!(sts["spec"]["template"]["spec"]["terminationGracePeriodSeconds"], 10);
+    }
+
+    #[test]
+    fn test_build_statefulset_image() {
+        let owner = test_owner_ref();
+        let config = ScK8Config {
+            image: "myregistry/fluvio:v1.0".to_string(),
+            ..Default::default()
+        };
+        let sts = build_statefulset("main", "ns", 1, 0, &config, None, &owner);
+        assert_eq!(sts["spec"]["template"]["spec"]["containers"][0]["image"], "myregistry/fluvio:v1.0");
+    }
+}
