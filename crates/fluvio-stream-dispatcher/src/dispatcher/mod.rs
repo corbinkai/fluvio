@@ -1,7 +1,7 @@
-#[cfg(feature = "k8")]
+#[cfg(any(feature = "k8", feature = "kube"))]
 mod metadata;
 
-#[cfg(feature = "k8")]
+#[cfg(any(feature = "k8", feature = "kube"))]
 pub use metadata::*;
 
 pub mod memory {

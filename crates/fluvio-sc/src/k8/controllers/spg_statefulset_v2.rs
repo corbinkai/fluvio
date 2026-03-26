@@ -101,6 +101,76 @@ async fn reconcile(
         .and_then(|v| v.as_i64())
         .unwrap_or(0) as i32;
 
+    // Check SPU ID conflicts
+    let spg_uid = spg.uid().unwrap_or_default();
+    let spu_ar = ApiResource::from_gvk(&GroupVersionKind::gvk(SPG_GROUP, SPG_VERSION, "Spu"));
+    let spu_api: Api<DynamicObject> = Api::namespaced_with(ctx.client.clone(), &spg_ns, &spu_ar);
+    let existing_spus = spu_api.list(&kube::api::ListParams::default()).await?;
+
+    let end_id_exclusive = min_id + replicas;
+    for spu_obj in &existing_spus.items {
+        // Skip SPUs owned by this SpuGroup
+        let is_owned = spu_obj
+            .metadata
+            .owner_references
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .any(|or| or.uid == spg_uid);
+        if is_owned {
+            continue;
+        }
+        if let Some(spu_id) = spu_obj.data.get("spec").and_then(|s| s.get("spuId")).and_then(|v| v.as_i64()) {
+            let spu_id = spu_id as i32;
+            if spu_id >= min_id && spu_id < end_id_exclusive {
+                warn!(%spg_name, conflict_id = spu_id, "SPU ID conflict with existing SPU");
+                // Update SpuGroup status to invalid
+                let status_patch = serde_json::json!({
+                    "apiVersion": format!("{SPG_GROUP}/{SPG_VERSION}"),
+                    "kind": SPG_KIND,
+                    "status": {
+                        "resolution": "Invalid",
+                        "reason": format!("SPU ID conflict with existing id: {spu_id}"),
+                    }
+                });
+                let spg_ar = ApiResource::from_gvk(&GroupVersionKind::gvk(SPG_GROUP, SPG_VERSION, SPG_KIND));
+                let spg_api: Api<DynamicObject> = Api::namespaced_with(ctx.client.clone(), &spg_ns, &spg_ar);
+                let _ = spg_api.patch_status(
+                    &spg_name,
+                    &PatchParams::apply("fluvio-sc").force(),
+                    &Patch::Apply(status_patch),
+                ).await;
+                return Ok(Action::requeue(Duration::from_secs(30)));
+            }
+        }
+    }
+
+    // Update SpuGroup status to Reserved if not already
+    let current_resolution = spg
+        .data
+        .get("status")
+        .and_then(|s| s.get("resolution"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("Init");
+
+    if current_resolution != "Reserved" {
+        debug!(%spg_name, "setting SpuGroup status to Reserved");
+        let status_patch = serde_json::json!({
+            "apiVersion": format!("{SPG_GROUP}/{SPG_VERSION}"),
+            "kind": SPG_KIND,
+            "status": {
+                "resolution": "Reserved",
+            }
+        });
+        let spg_ar = ApiResource::from_gvk(&GroupVersionKind::gvk(SPG_GROUP, SPG_VERSION, SPG_KIND));
+        let spg_api: Api<DynamicObject> = Api::namespaced_with(ctx.client.clone(), &spg_ns, &spg_ar);
+        let _ = spg_api.patch_status(
+            &spg_name,
+            &PatchParams::apply("fluvio-sc").force(),
+            &Patch::Apply(status_patch),
+        ).await;
+    }
+
     // Load spu-k8 ConfigMap
     let config = match load_spu_k8_config(&ctx.client, &spg_ns).await {
         Ok(c) => c,
