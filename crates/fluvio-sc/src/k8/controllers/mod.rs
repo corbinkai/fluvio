@@ -1,8 +1,5 @@
-pub mod spg_stateful;
 pub mod spg_statefulset_v2;
-pub mod spu_service;
 pub mod spu_service_v2;
-pub mod spu_controller;
 pub mod spu_controller_v2;
 pub mod ingress;
 
@@ -10,114 +7,33 @@ pub use k8_operator::run_k8_operators;
 
 mod k8_operator {
 
-    use fluvio_stream_dispatcher::metadata::{SharedClient, MetadataClient};
-    use fluvio_stream_model::store::k8::K8MetaItem;
     use tracing::info;
 
     use crate::cli::TlsConfig;
     use crate::core::K8SharedContext;
-    use crate::stores::StoreContext;
-    use crate::dispatcher::dispatcher::MetadataDispatcher;
-    use crate::k8::objects::spu_service::SpuServiceSpec;
-    use crate::k8::objects::statefulset::StatefulsetSpec;
-    use crate::k8::objects::spg_service::SpgServiceSpec;
-    use crate::k8::objects::spu_k8_config::ScK8Config;
 
-    use crate::k8::controllers::spg_stateful::SpgStatefulSetController;
-    use crate::k8::controllers::spu_service::SpuServiceController;
-    use crate::k8::controllers::spu_controller::K8SpuController;
-
-    pub async fn run_k8_operators<C: MetadataClient<K8MetaItem> + 'static>(
+    pub async fn run_k8_operators(
         namespace: String,
-        client: SharedClient<C>,
-        kube_client: Option<kube::Client>,
-        global_ctx: K8SharedContext,
+        kube_client: kube::Client,
+        _global_ctx: K8SharedContext,
         tls: Option<TlsConfig>,
     ) {
-        let config = global_ctx.config();
+        info!("starting k8 cluster operators (kube-rs)");
 
-        let spu_service_ctx: StoreContext<SpuServiceSpec, K8MetaItem> = StoreContext::new();
-        let statefulset_ctx: StoreContext<StatefulsetSpec, K8MetaItem> = StoreContext::new();
-        let spg_service_ctx: StoreContext<SpgServiceSpec, K8MetaItem> = StoreContext::new();
-
-        let config_ctx: StoreContext<ScK8Config, K8MetaItem> = StoreContext::new();
-
-        info!("starting k8 cluster operators");
-
-        MetadataDispatcher::<_, _, K8MetaItem>::start(
+        super::spg_statefulset_v2::start(
+            kube_client.clone(),
             namespace.clone(),
-            client.clone(),
-            spu_service_ctx.clone(),
+            tls,
         );
 
-        MetadataDispatcher::<_, _, K8MetaItem>::start(
+        super::spu_controller_v2::start(
+            kube_client.clone(),
             namespace.clone(),
-            client.clone(),
-            statefulset_ctx.clone(),
         );
 
-        MetadataDispatcher::<_, _, K8MetaItem>::start(
-            namespace.clone(),
-            client.clone(),
-            spg_service_ctx.clone(),
+        super::spu_service_v2::start(
+            kube_client,
+            namespace,
         );
-
-        MetadataDispatcher::<_, _, K8MetaItem>::start(
-            namespace.clone(),
-            client,
-            config_ctx.clone(),
-        );
-
-        if let Some(kube_client) = kube_client {
-            // Use kube-rs controllers (v2)
-            let ns = namespace.clone();
-
-            whitelist!(config, "k8_spg", {
-                super::spg_statefulset_v2::start(
-                    kube_client.clone(),
-                    ns.clone(),
-                    tls,
-                );
-            });
-
-            whitelist!(config, "k8_spu", {
-                super::spu_controller_v2::start(
-                    kube_client.clone(),
-                    ns.clone(),
-                );
-            });
-
-            whitelist!(config, "k8_spu_service", {
-                super::spu_service_v2::start(
-                    kube_client.clone(),
-                    ns.clone(),
-                );
-            });
-        } else {
-            // Fallback to old controllers (for local/memory mode)
-            whitelist!(config, "k8_spg", {
-                SpgStatefulSetController::start(
-                    namespace,
-                    config_ctx.clone(),
-                    global_ctx.spgs().clone(),
-                    statefulset_ctx,
-                    global_ctx.spus().clone(),
-                    spg_service_ctx,
-                    tls,
-                );
-            });
-
-            whitelist!(config, "k8_spu", {
-                K8SpuController::start(
-                    global_ctx.spus().clone(),
-                    spu_service_ctx.clone(),
-                    global_ctx.spgs().clone(),
-                );
-            });
-
-            whitelist!(config, "k8_spu_service", {
-                SpuServiceController::start(config_ctx, spu_service_ctx, global_ctx.spgs().clone());
-            });
-        }
     }
 }

@@ -81,8 +81,7 @@ pub fn main_loop(opt: ScOpt) {
 
                 crate::k8::controllers::run_k8_operators(
                     sc_config.namespace.clone(),
-                    client,
-                    Some(kube_client),
+                    kube_client,
                     ctx,
                     tls_option.clone().map(|(_, config)| config),
                 )
@@ -115,39 +114,6 @@ fn inspect_system() {
     info!(total_memory = sys.total_memory(), "System");
     info!(available_memory = sys.available_memory(), "System");
     info!(uptime = System::uptime(), "Uptime in secs");
-}
-
-fn k8_main_loop<C>(
-    sc_config: ScConfig,
-    client: SharedClient<C>,
-    auth_policy: Option<BasicRbacPolicy>,
-    tls_option: Option<(String, TlsConfig)>,
-) where
-    C: MetadataClient<K8MetaItem> + 'static,
-{
-    run_block_on(async move {
-        info!("starting k8 main loop");
-
-        let ctx =
-            crate::init::start_main_loop((sc_config.clone(), auth_policy), client.clone()).await;
-
-        crate::k8::controllers::run_k8_operators(
-            sc_config.namespace.clone(),
-            client,
-            None,
-            ctx,
-            tls_option.clone().map(|(_, config)| config),
-        )
-        .await;
-
-        proxy::start_if(sc_config, tls_option).await;
-
-        println!("Streaming Controller started successfully");
-        // do infinite loop
-        loop {
-            sleep(Duration::from_secs(60)).await;
-        }
-    });
 }
 
 fn local_main_loop<C, M>(
