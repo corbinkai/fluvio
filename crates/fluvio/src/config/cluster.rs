@@ -3,6 +3,9 @@
 //!
 //! Stores configuration parameter retrieved from the default or custom profile file.
 //!
+use std::sync::OnceLock;
+use std::time::Duration;
+
 use serde::{Serialize, Deserialize};
 use toml::Table as Metadata;
 
@@ -10,9 +13,48 @@ use crate::{config::TlsPolicy, FluvioError};
 
 use super::ConfigFile;
 
+/// Global SPU retry configuration, set when FluvioClusterConfig is loaded.
+static SPU_RETRY_CONFIG: OnceLock<SpuRetryConfig> = OnceLock::new();
+
+/// SPU connection retry backoff configuration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpuRetryConfig {
+    pub retry_count: u32,
+    pub initial_delay: Duration,
+    pub max_delay: Duration,
+}
+
+impl Default for SpuRetryConfig {
+    fn default() -> Self {
+        Self {
+            retry_count: default_spu_retry_count(),
+            initial_delay: Duration::from_millis(default_spu_retry_initial_delay_ms()),
+            max_delay: Duration::from_millis(default_spu_retry_max_delay_ms()),
+        }
+    }
+}
+
+/// Returns the active SPU retry configuration.
+/// Uses the globally set config if available, otherwise returns defaults.
+pub fn spu_retry_config() -> SpuRetryConfig {
+    SPU_RETRY_CONFIG.get().cloned().unwrap_or_default()
+}
+
 //NOTE: this is to avoid breaking changes as we rename it to FluvioClusterConfig
 /// Fluvio client configuration
 pub type FluvioConfig = FluvioClusterConfig;
+
+fn default_spu_retry_count() -> u32 {
+    16
+}
+
+fn default_spu_retry_initial_delay_ms() -> u64 {
+    1000
+}
+
+fn default_spu_retry_max_delay_ms() -> u64 {
+    30000
+}
 
 /// Fluvio Cluster Target Configuration
 /// This is part of profile
@@ -34,6 +76,18 @@ pub struct FluvioClusterConfig {
     #[serde(default)]
     pub tls: TlsPolicy,
 
+    /// Maximum number of SPU connection retry attempts before giving up.
+    #[serde(default = "default_spu_retry_count")]
+    pub spu_retry_count: u32,
+
+    /// Initial delay in milliseconds before the first SPU connection retry.
+    #[serde(default = "default_spu_retry_initial_delay_ms")]
+    pub spu_retry_initial_delay_ms: u64,
+
+    /// Maximum delay in milliseconds between SPU connection retries.
+    #[serde(default = "default_spu_retry_max_delay_ms")]
+    pub spu_retry_max_delay_ms: u64,
+
     /// Cluster custom metadata
     #[serde(default = "Metadata::new", skip_serializing_if = "Metadata::is_empty")]
     metadata: Metadata,
@@ -50,6 +104,7 @@ impl FluvioClusterConfig {
         let config_file = ConfigFile::load_default_or_new()?;
         let mut cluster_config = config_file.config().current_cluster()?.to_owned();
         cluster_config.apply_env_overrides();
+        cluster_config.publish_spu_retry_config();
         Ok(cluster_config)
     }
 
@@ -60,6 +115,7 @@ impl FluvioClusterConfig {
         let cluster_config = config_file.config().cluster_with_profile(profile_name);
         Ok(cluster_config.cloned().map(|mut c| {
             c.apply_env_overrides();
+            c.publish_spu_retry_config();
             c
         }))
     }
@@ -70,6 +126,39 @@ impl FluvioClusterConfig {
                 self.use_spu_local_address = true;
             }
         }
+        if let Ok(val) = std::env::var("FLUVIO_SPU_RETRY_COUNT") {
+            if let Ok(v) = val.parse::<u32>() {
+                self.spu_retry_count = v;
+            }
+        }
+        if let Ok(val) = std::env::var("FLUVIO_SPU_RETRY_INITIAL_DELAY_MS") {
+            if let Ok(v) = val.parse::<u64>() {
+                self.spu_retry_initial_delay_ms = v;
+            }
+        }
+        if let Ok(val) = std::env::var("FLUVIO_SPU_RETRY_MAX_DELAY_MS") {
+            if let Ok(v) = val.parse::<u64>() {
+                self.spu_retry_max_delay_ms = v;
+            }
+        }
+    }
+
+    fn publish_spu_retry_config(&self) {
+        let _ = SPU_RETRY_CONFIG.set(SpuRetryConfig {
+            retry_count: self.spu_retry_count,
+            initial_delay: Duration::from_millis(self.spu_retry_initial_delay_ms),
+            max_delay: Duration::from_millis(self.spu_retry_max_delay_ms),
+        });
+    }
+
+    /// Returns the SPU retry initial delay as a Duration.
+    pub fn spu_retry_initial_delay(&self) -> Duration {
+        Duration::from_millis(self.spu_retry_initial_delay_ms)
+    }
+
+    /// Returns the SPU retry max delay as a Duration.
+    pub fn spu_retry_max_delay(&self) -> Duration {
+        Duration::from_millis(self.spu_retry_max_delay_ms)
     }
 
     /// Create a new cluster configuration with no TLS.
@@ -78,6 +167,9 @@ impl FluvioClusterConfig {
             endpoint: addr.into(),
             use_spu_local_address: false,
             tls: TlsPolicy::Disabled,
+            spu_retry_count: default_spu_retry_count(),
+            spu_retry_initial_delay_ms: default_spu_retry_initial_delay_ms(),
+            spu_retry_max_delay_ms: default_spu_retry_max_delay_ms(),
             metadata: Metadata::new(),
             client_id: None,
         }
@@ -414,5 +506,90 @@ type = "local"
     fn test_spu_local_address_default_false() {
         let config = FluvioClusterConfig::new("localhost:9003");
         assert!(!config.use_spu_local_address);
+    }
+
+    #[test]
+    fn test_spu_retry_defaults() {
+        let config = FluvioClusterConfig::new("localhost:9003");
+        assert_eq!(config.spu_retry_count, 16);
+        assert_eq!(config.spu_retry_initial_delay_ms, 1000);
+        assert_eq!(config.spu_retry_max_delay_ms, 30000);
+    }
+
+    #[test]
+    fn test_spu_retry_duration_helpers() {
+        let config = FluvioClusterConfig::new("localhost:9003");
+        assert_eq!(
+            config.spu_retry_initial_delay(),
+            std::time::Duration::from_millis(1000)
+        );
+        assert_eq!(
+            config.spu_retry_max_delay(),
+            std::time::Duration::from_millis(30000)
+        );
+    }
+
+    #[test]
+    fn test_spu_retry_config_deserialization_defaults() {
+        let toml = r#"version = "2"
+[profile.local]
+cluster = "local"
+
+[cluster.local]
+endpoint = "127.0.0.1:9003"
+"#;
+        let profile = Config::load_str(toml).unwrap();
+        let config = profile.cluster("local").unwrap();
+        assert_eq!(config.spu_retry_count, 16);
+        assert_eq!(config.spu_retry_initial_delay_ms, 1000);
+        assert_eq!(config.spu_retry_max_delay_ms, 30000);
+    }
+
+    #[test]
+    fn test_spu_retry_config_deserialization_custom() {
+        let toml = r#"version = "2"
+[profile.local]
+cluster = "local"
+
+[cluster.local]
+endpoint = "127.0.0.1:9003"
+spu_retry_count = 5
+spu_retry_initial_delay_ms = 200
+spu_retry_max_delay_ms = 10000
+"#;
+        let profile = Config::load_str(toml).unwrap();
+        let config = profile.cluster("local").unwrap();
+        assert_eq!(config.spu_retry_count, 5);
+        assert_eq!(config.spu_retry_initial_delay_ms, 200);
+        assert_eq!(config.spu_retry_max_delay_ms, 10000);
+    }
+
+    fn parse_spu_retry_env_u32(val: &str) -> Option<u32> {
+        val.parse::<u32>().ok()
+    }
+
+    fn parse_spu_retry_env_u64(val: &str) -> Option<u64> {
+        val.parse::<u64>().ok()
+    }
+
+    #[test]
+    fn test_spu_retry_env_var_parsing() {
+        assert_eq!(parse_spu_retry_env_u32("5"), Some(5));
+        assert_eq!(parse_spu_retry_env_u32("0"), Some(0));
+        assert_eq!(parse_spu_retry_env_u32("abc"), None);
+        assert_eq!(parse_spu_retry_env_u32(""), None);
+
+        assert_eq!(parse_spu_retry_env_u64("500"), Some(500));
+        assert_eq!(parse_spu_retry_env_u64("0"), Some(0));
+        assert_eq!(parse_spu_retry_env_u64("abc"), None);
+    }
+
+    #[test]
+    fn test_spu_retry_config_global_default() {
+        use super::SpuRetryConfig;
+        let cfg = SpuRetryConfig::default();
+        assert_eq!(cfg.retry_count, 16);
+        assert_eq!(cfg.initial_delay, std::time::Duration::from_millis(1000));
+        assert_eq!(cfg.max_delay, std::time::Duration::from_millis(30000));
     }
 }

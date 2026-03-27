@@ -120,7 +120,7 @@ impl Default for SpuConfig {
             rack: None,
             public_endpoint: format!("0.0.0.0:{SPU_PUBLIC_PORT}"),
             private_endpoint: format!("0.0.0.0:{SPU_PRIVATE_PORT}"),
-            sc_endpoint: format!("localhost:{SC_PRIVATE_PORT}"),
+            sc_endpoint: format!("127.0.0.1:{SC_PRIVATE_PORT}"),
             replication: ReplicationConfig::default(),
             sc_retry_ms: SPU_RETRY_SC_TIMEOUT_MS,
             log: Log::default(),

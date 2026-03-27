@@ -2319,7 +2319,6 @@ dependencies = [
  "indicatif",
  "k8-client",
  "k8-config",
- "k8-types",
  "mimalloc",
  "semver 1.0.26",
  "serde",
@@ -3005,9 +3004,9 @@ dependencies = [
  "async-lock",
  "event-listener",
  "fluvio-future",
- "k8-types",
  "once_cell",
  "serde",
+ "serde_json",
  "tokio",
  "tracing",
 ]

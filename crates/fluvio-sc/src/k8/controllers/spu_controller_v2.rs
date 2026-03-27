@@ -182,14 +182,12 @@ fn build_spu_object(
     namespace: &str,
     owner_ref: &k8s_openapi::apimachinery::pkg::apis::meta::v1::OwnerReference,
 ) -> serde_json::Value {
-    use crate::stores::spu::IngressAddr;
-
     let public_svc_fqdn = format!("fluvio-spu-{spu_name}.{namespace}.svc.cluster.local");
     let private_svc_fqdn = format!(
         "fluvio-spg-main-{replica_index}.fluvio-spg-{spg_name}.{namespace}.svc.cluster.local"
     );
 
-    let ingress_entries: Vec<serde_json::Value> = public_endpoint
+    let mut ingress_entries: Vec<serde_json::Value> = public_endpoint
         .ingress
         .iter()
         .map(|addr| {
@@ -204,6 +202,18 @@ fn build_spu_object(
         })
         .collect();
 
+    if ingress_entries.is_empty() {
+        ingress_entries.push(serde_json::json!({
+            "hostname": public_svc_fqdn,
+        }));
+    }
+
+    let public_port = if public_endpoint.port == 0 {
+        SPU_PUBLIC_PORT
+    } else {
+        public_endpoint.port
+    };
+
     serde_json::json!({
         "apiVersion": format!("{SPG_GROUP}/{SPG_VERSION}"),
         "kind": SPU_KIND,
@@ -216,16 +226,19 @@ fn build_spu_object(
             "spuId": spu_id,
             "spuType": "Managed",
             "publicEndpoint": {
-                "port": public_endpoint.port,
+                "port": public_port,
                 "ingress": ingress_entries,
+                "encryption": "PLAINTEXT",
             },
             "privateEndpoint": {
                 "host": private_svc_fqdn,
                 "port": SPU_PRIVATE_PORT,
+                "encryption": "PLAINTEXT",
             },
             "publicEndpointLocal": {
                 "host": public_svc_fqdn,
                 "port": SPU_PUBLIC_PORT,
+                "encryption": "PLAINTEXT",
             },
         }
     })
@@ -303,7 +316,17 @@ mod tests {
         let endpoint = IngressPort::default();
         let obj = build_spu_object("main-0", "main", 0, 0, &endpoint, "ns", &test_owner_ref());
         let ingress = obj["spec"]["publicEndpoint"]["ingress"].as_array().unwrap();
-        assert!(ingress.is_empty());
+        assert_eq!(obj["spec"]["publicEndpoint"]["port"], SPU_PUBLIC_PORT);
+        assert_eq!(ingress[0]["hostname"], "fluvio-spu-main-0.ns.svc.cluster.local");
+    }
+
+    #[test]
+    fn test_spu_object_sets_plaintext_encryption_fields() {
+        let endpoint = IngressPort::default();
+        let obj = build_spu_object("main-0", "main", 0, 0, &endpoint, "ns", &test_owner_ref());
+        assert_eq!(obj["spec"]["publicEndpoint"]["encryption"], "PLAINTEXT");
+        assert_eq!(obj["spec"]["privateEndpoint"]["encryption"], "PLAINTEXT");
+        assert_eq!(obj["spec"]["publicEndpointLocal"]["encryption"], "PLAINTEXT");
     }
 
     #[test]

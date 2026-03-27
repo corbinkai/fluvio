@@ -10,9 +10,7 @@ use adaptive_backoff::prelude::{
 use async_lock::Mutex;
 use async_trait::async_trait;
 use fluvio_socket::ClientConfig;
-use fluvio_types::defaults::{
-    RECONNECT_BACKOFF_FACTOR, RECONNECT_BACKOFF_MAX_DURATION, RECONNECT_BACKOFF_MIN_DURATION,
-};
+use crate::config::spu_retry_config;
 use futures_util::Stream;
 use futures_util::StreamExt;
 use tokio::select;
@@ -373,12 +371,13 @@ impl ConsumerRetryStream {
     }
 }
 
-/// Creates an exponential backoff configuration.
+/// Creates an exponential backoff configuration using the active SPU retry config.
 fn create_backoff() -> Result<ExponentialBackoff> {
+    let cfg = spu_retry_config();
     ExponentialBackoffBuilder::default()
-        .factor(RECONNECT_BACKOFF_FACTOR)
-        .min(RECONNECT_BACKOFF_MIN_DURATION)
-        .max(RECONNECT_BACKOFF_MAX_DURATION)
+        .factor(1.1)
+        .min(cfg.initial_delay)
+        .max(cfg.max_delay)
         .build()
 }
 
@@ -443,7 +442,7 @@ mod tests {
         let multi_stream = MultiplePartitionConsumerStream::new([partition_stream]);
 
         let inner = ConsumerRetryInner {
-            client_config: Arc::new(ClientConfig::with_addr("localhost:9010".to_string())),
+            client_config: Arc::new(ClientConfig::with_addr("localhost:9005".to_string())),
             cluster_config: super::FluvioClusterConfig::new("localhost:9003".to_string()),
             next_offset_to_read: None,
             consumer_config: ConsumerConfigExt::builder()
@@ -514,7 +513,7 @@ mod tests {
 
         let mut retry_stream = ConsumerRetryStream {
             inner: ConsumerRetryInner {
-                client_config: Arc::new(ClientConfig::with_addr("localhost:9010".to_string())),
+                client_config: Arc::new(ClientConfig::with_addr("localhost:9005".to_string())),
                 cluster_config: FluvioClusterConfig::new("localhost:9003".to_string()),
                 next_offset_to_read: None,
                 consumer_config: ConsumerConfigExt::builder()

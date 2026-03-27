@@ -7,6 +7,9 @@ cluster = "updated"
 [cluster.updated]
 endpoint = "127.0.0.1"
 use_spu_local_address = false
+spu_retry_count = 16
+spu_retry_initial_delay_ms = 1000
+spu_retry_max_delay_ms = 30000
 
 [cluster.updated.tls]
 tls_policy = "disabled"

@@ -9,6 +9,7 @@ use fluvio_controlplane_metadata::spu::{Endpoint, IngressAddr, IngressPort, SpuS
 use fluvio_command::CommandExt;
 use fluvio::config::TlsPolicy;
 use fluvio_types::SpuId;
+use fluvio_types::defaults::SPU_PUBLIC_PORT;
 
 use crate::runtime::spu::{SpuClusterManager, SpuTarget};
 
@@ -79,7 +80,7 @@ impl SpuTarget for LocalSpuProcess {
     }
 }
 
-const BASE_PORT: u16 = 9010;
+const BASE_PORT: u16 = SPU_PUBLIC_PORT;
 const BASE_SPU: u16 = 5001;
 
 /// Manage SPU Process Cluster
@@ -106,14 +107,14 @@ impl SpuClusterManager for LocalSpuProcessClusterManager {
             public_endpoint: IngressPort {
                 port: public_port,
                 ingress: vec![IngressAddr {
-                    hostname: Some("localhost".to_owned()),
+                    hostname: Some("127.0.0.1".to_owned()),
                     ..Default::default()
                 }],
                 ..Default::default()
             },
             private_endpoint: Endpoint {
                 port: private_port,
-                host: "localhost".to_owned(),
+                host: "127.0.0.1".to_owned(),
                 ..Default::default()
             },
             ..Default::default()

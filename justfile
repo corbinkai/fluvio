@@ -253,6 +253,7 @@ deploy: create-cluster push-image
       --kube-context {{ kube_ctx }} \
       --set image.registry={{ registry }} \
       --set image.tag=dev \
+      --set image.pullPolicy=Always \
       --set service.type=ClusterIP \
       --set serviceAccount.name=fluvio
     kubectl patch configmap/spu-k8 -n {{ namespace }} --context {{ kube_ctx }} --type=merge -p '{
@@ -292,7 +293,7 @@ deploy: create-cluster push-image
         }
       }
     }"
-    kubectl rollout restart statefulset/fluvio-spg-main -n {{ namespace }} --context {{ kube_ctx }}
+    kubectl delete pod fluvio-spg-main-0 -n {{ namespace }} --context {{ kube_ctx }} --ignore-not-found
     echo "Waiting for SPU StatefulSet..."
     kubectl rollout status statefulset/fluvio-spg-main -n {{ namespace }} --context {{ kube_ctx }} --timeout=300s
     kubectl get deploy,sts,svc,spugroup,spu -n {{ namespace }} --context {{ kube_ctx }}

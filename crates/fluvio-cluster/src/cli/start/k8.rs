@@ -37,7 +37,7 @@ pub async fn process_k8(opt: StartOpt, platform_version: Version, upgrade: bool)
         .use_cluster_ip(opt.k8_config.use_cluster_ip);
 
     if cfg!(target_os = "macos") {
-        builder.proxy_addr(opt.proxy_addr.unwrap_or_else(|| String::from("localhost")));
+        builder.proxy_addr(opt.proxy_addr.unwrap_or_else(|| String::from("127.0.0.1")));
     } else {
         builder.proxy_addr(opt.proxy_addr);
     }

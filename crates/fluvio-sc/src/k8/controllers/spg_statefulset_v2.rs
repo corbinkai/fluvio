@@ -294,6 +294,10 @@ fn build_statefulset(
             "name": "SPU_MIN",
             "value": format!("{min_id}")
         }),
+        serde_json::json!({
+            "name": "FLV_SHORT_RECONCILLATION",
+            "value": "1"
+        }),
     ];
 
     if let Ok(rust_log) = std::env::var("RUST_LOG") {
@@ -366,6 +370,7 @@ fn build_statefulset(
     let mut container = serde_json::json!({
         "name": SPU_DEFAULT_NAME,
         "image": config.image,
+        "imagePullPolicy": "Always",
         "ports": [
             { "name": "public", "containerPort": SPU_PUBLIC_PORT },
             { "name": "private", "containerPort": SPU_PRIVATE_PORT },
@@ -631,6 +636,15 @@ mod tests {
         let sts = build_statefulset("main", "ns", 1, 0, &config, None, &owner);
         let ns = &sts["spec"]["template"]["spec"]["nodeSelector"];
         assert_eq!(ns["kubernetes.io/arch"], "arm64");
+    }
+
+    #[test]
+    fn test_build_statefulset_has_short_reconcillation_env() {
+        let owner = test_owner_ref();
+        let sts = build_statefulset("main", "ns", 1, 0, &default_config(), None, &owner);
+        let env = sts["spec"]["template"]["spec"]["containers"][0]["env"].as_array().unwrap();
+        let reconcillation = env.iter().find(|e| e["name"] == "FLV_SHORT_RECONCILLATION").unwrap();
+        assert_eq!(reconcillation["value"], "1");
     }
 
     #[test]

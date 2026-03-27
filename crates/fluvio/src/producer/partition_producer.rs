@@ -4,9 +4,7 @@ use adaptive_backoff::prelude::{
     Backoff, BackoffBuilder, ExponentialBackoff, ExponentialBackoffBuilder,
 };
 use async_lock::RwLock;
-use fluvio_types::defaults::{
-    RECONNECT_BACKOFF_FACTOR, RECONNECT_BACKOFF_MAX_DURATION, RECONNECT_BACKOFF_MIN_DURATION,
-};
+use crate::config::spu_retry_config;
 use tracing::{debug, info, instrument, error, trace};
 
 use fluvio_protocol::record::ReplicaKey;
@@ -323,12 +321,13 @@ where
     }
 }
 
-/// Creates an exponential backoff configuration.
+/// Creates an exponential backoff configuration using the active SPU retry config.
 fn create_backoff() -> anyhow::Result<ExponentialBackoff> {
+    let cfg = spu_retry_config();
     ExponentialBackoffBuilder::default()
-        .factor(RECONNECT_BACKOFF_FACTOR)
-        .min(RECONNECT_BACKOFF_MIN_DURATION)
-        .max(RECONNECT_BACKOFF_MAX_DURATION)
+        .factor(1.1)
+        .min(cfg.initial_delay)
+        .max(cfg.max_delay)
         .build()
 }
 

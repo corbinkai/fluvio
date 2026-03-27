@@ -889,7 +889,7 @@ impl ClusterInstaller {
         service: &K8Obj<ServiceSpec>,
         pb: &ProgressRenderer,
     ) -> Result<(String, u16, Child)> {
-        let pf_host_name = "localhost";
+        let pf_host_name = "127.0.0.1";
 
         let pf_port = portpicker::pick_unused_port().expect("No local ports available");
         let target_port = ClusterInstaller::target_port_for_service(service)?;

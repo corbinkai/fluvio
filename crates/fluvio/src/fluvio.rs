@@ -563,7 +563,7 @@ mod wasm_tests {
             &self,
             addr: &str,
         ) -> Result<(BoxWriteConnection, BoxReadConnection, ConnectionFd), IoError> {
-            let addr = if addr == "localhost:9010" {
+            let addr = if addr == "localhost:9005" {
                 "ws://localhost:3001"
             } else {
                 addr

@@ -450,7 +450,9 @@ mod file_replica {
         )]
         pub async fn demote_replica(&self, replica: Replica) {
             if let Some(leader_replica_state) = self.leaders_state().remove(&replica.id).await {
-                drop(leader_replica_state);
+                // Signal connected consumers before demotion so they disconnect
+                // and reconnect to the new leader
+                leader_replica_state.signal_topic_deleted().await;
                 if let Err(err) = self
                     .followers_state_owned()
                     .add_replica(self, replica)

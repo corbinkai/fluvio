@@ -30,8 +30,8 @@ use futures_util::FutureExt;
 use fluvio_types::PartitionId;
 use fluvio_types::defaults::{
     CONSUMER_REPLICA_KEY, FLUVIO_CLIENT_MAX_FETCH_BYTES, FLUVIO_MAX_SIZE_TOPIC_NAME,
-    RECONNECT_BACKOFF_FACTOR, RECONNECT_BACKOFF_MAX_DURATION, RECONNECT_BACKOFF_MIN_DURATION,
 };
+use crate::config::spu_retry_config;
 use fluvio_spu_schema::server::stream_fetch::{
     DefaultStreamFetchRequest, DefaultStreamFetchResponse, CHAIN_SMARTMODULE_API,
     OFFSET_MANAGEMENT_API,
@@ -63,7 +63,6 @@ pub use fluvio_spu_schema::server::smartmodule::SmartModuleContextData;
 pub use fluvio_smartmodule::dataplane::smartmodule::SmartModuleExtraParams;
 
 const STREAM_TO_SERVER_CHANNEL_SIZE: usize = 100;
-const MAX_ATTEMPTS_CONSUMER_OFFSET: usize = 30;
 
 /// Type alias for the consumer record stream.
 #[cfg(target_arch = "wasm32")]
@@ -589,6 +588,8 @@ where
     }
 
     async fn create_serial_socket_retry(&self) -> Result<VersionedSerialSocket> {
+        let cfg = spu_retry_config();
+        let max_attempts = cfg.retry_count as usize;
         let mut attempts = 0;
         let mut backoff = create_backoff()?;
         loop {
@@ -604,7 +605,7 @@ where
                     backoff_and_wait(&mut backoff).await;
                     attempts += 1;
 
-                    if attempts >= MAX_ATTEMPTS_CONSUMER_OFFSET {
+                    if attempts >= max_attempts {
                         return Err(ErrorCode::Other(
                             "Failed to create consumer offset socket".to_string(),
                         )
@@ -984,12 +985,13 @@ impl<T> StreamToServerCallback<T> {
     }
 }
 
-/// Creates an exponential backoff configuration.
+/// Creates an exponential backoff configuration using the active SPU retry config.
 fn create_backoff() -> Result<ExponentialBackoff> {
+    let cfg = spu_retry_config();
     ExponentialBackoffBuilder::default()
-        .factor(RECONNECT_BACKOFF_FACTOR)
-        .min(RECONNECT_BACKOFF_MIN_DURATION)
-        .max(RECONNECT_BACKOFF_MAX_DURATION)
+        .factor(1.1)
+        .min(cfg.initial_delay)
+        .max(cfg.max_delay)
         .build()
 }
 

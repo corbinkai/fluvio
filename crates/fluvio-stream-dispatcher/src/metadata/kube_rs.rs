@@ -2,6 +2,7 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use futures_util::stream::BoxStream;
 use futures_util::StreamExt;
+use serde_json::{Map, Value};
 use tracing::{debug, error, trace};
 
 use kube::api::{Api, DynamicObject, ApiResource, GroupVersionKind, ListParams, DeleteParams, Patch, PatchParams, PostParams};
@@ -66,9 +67,46 @@ fn dynamic_to_k8obj<K: K8Spec>(obj: DynamicObject) -> Result<K8Obj<K>>
 where
     K: serde::de::DeserializeOwned,
 {
-    let value = serde_json::to_value(obj)?;
+    let mut value = serde_json::to_value(obj)?;
+    normalize_sparse_spu_fields(&mut value);
     let k8_obj: K8Obj<K> = serde_json::from_value(value)?;
     Ok(k8_obj)
+}
+
+fn normalize_sparse_spu_fields(value: &mut Value) {
+    let Some(kind) = value.get("kind").and_then(Value::as_str) else {
+        return;
+    };
+
+    if kind != "Spu" {
+        return;
+    }
+
+    let Some(spec) = value.get_mut("spec").and_then(Value::as_object_mut) else {
+        return;
+    };
+
+    default_encryption(spec.get_mut("publicEndpoint"));
+    default_encryption(spec.get_mut("privateEndpoint"));
+    default_encryption(spec.get_mut("publicEndpointLocal"));
+}
+
+fn default_encryption(target: Option<&mut Value>) {
+    let Some(entry) = target else {
+        return;
+    };
+
+    let Some(map) = entry.as_object_mut() else {
+        return;
+    };
+
+    insert_plaintext_encryption(map);
+}
+
+fn insert_plaintext_encryption(map: &mut Map<String, Value>) {
+    if !map.contains_key("encryption") {
+        map.insert("encryption".to_string(), Value::String("PLAINTEXT".to_string()));
+    }
 }
 
 #[async_trait]
