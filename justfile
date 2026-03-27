@@ -13,11 +13,12 @@ default:
     @echo "Koshee Fluvio Justfile"
     @echo ""
     @echo "Quick start:"
-    @echo "  just create-cluster    # create k3d cluster + install CRDs"
+    @echo "  just shared-up         # shared-infra k3d bring-up"
+    @echo "  just standalone-up     # standalone k3d bring-up"
+    @echo "  just destroy           # delete local k3d cluster"
     @echo "  just build             # build CLI + cluster binary"
     @echo "  just test              # run unit tests"
     @echo "  just check             # fmt + clippy + docs"
-    @echo "  just deploy            # build image + deploy SC to k3d"
     @echo ""
     @just --list --unsorted
 
@@ -178,6 +179,12 @@ create-cluster:
 # Delete k3d cluster
 delete-cluster:
     k3d cluster delete {{ cluster_name }}
+
+shared-up: deploy
+
+standalone-up: deploy
+
+destroy: delete-cluster
 
 # Stop k3d cluster (preserves state)
 stop-cluster:
