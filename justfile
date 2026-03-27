@@ -6,6 +6,7 @@ registry_host := "localhost:9050"
 registry     := "koshee-dev-zot:5000"
 namespace    := "fluvio-system"
 kube_ctx     := "k3d-" + cluster_name
+kubeconfig   := justfile_directory() + "/kubeconfig-k3d.yaml"
 
 # Show available recipes
 default:
@@ -166,11 +167,12 @@ create-cluster:
       echo "Cluster {{ cluster_name }} already exists"
     else
       k3d cluster create --config k3d/cluster.yaml
-      echo "Waiting for cluster to be ready..."
-      kubectl wait --for=condition=Ready nodes --all --timeout=120s --context {{ kube_ctx }}
     fi
-    kubectl create namespace {{ namespace }} --context {{ kube_ctx }} 2>/dev/null || true
-    kubectl apply -f k8-util/helm/fluvio-sys/templates/ --context {{ kube_ctx }}
+    k3d kubeconfig get {{ cluster_name }} > {{ kubeconfig }}
+    echo "Waiting for cluster to be ready..."
+    KUBECONFIG={{ kubeconfig }} kubectl wait --for=condition=Ready nodes --all --timeout=120s --context {{ kube_ctx }}
+    KUBECONFIG={{ kubeconfig }} kubectl create namespace {{ namespace }} --context {{ kube_ctx }} 2>/dev/null || true
+    KUBECONFIG={{ kubeconfig }} kubectl apply -f k8-util/helm/fluvio-sys/templates/ --context {{ kube_ctx }}
     echo "Fluvio CRDs installed in {{ namespace }}"
 
 # Delete k3d cluster
@@ -193,10 +195,10 @@ cluster-status:
     k3d cluster list | grep {{ cluster_name }} || echo "Not found"
     echo ""
     echo "=== Nodes ==="
-    kubectl get nodes --context {{ kube_ctx }} 2>/dev/null || echo "Cluster not running"
+    KUBECONFIG={{ kubeconfig }} kubectl get nodes --context {{ kube_ctx }} 2>/dev/null || echo "Cluster not running"
     echo ""
     echo "=== Fluvio Resources ==="
-    kubectl get spugroups,spus,topics,statefulset,svc -n {{ namespace }} --context {{ kube_ctx }} 2>/dev/null || true
+    KUBECONFIG={{ kubeconfig }} kubectl get spugroups,spus,topics,statefulset,svc -n {{ namespace }} --context {{ kube_ctx }} 2>/dev/null || true
 
 # ============================================================
 # DEPLOY (K3D)
@@ -230,7 +232,7 @@ deploy: create-cluster push-image
     IMAGE="{{ registry }}/fluvio:dev"
 
     echo "Deploying SC with image ${IMAGE}..."
-    kubectl delete configmap/spu-k8 \
+    KUBECONFIG={{ kubeconfig }} kubectl delete configmap/spu-k8 \
       deployment/fluvio-sc \
       service/fluvio-sc-public \
       service/fluvio-sc-internal \
@@ -245,24 +247,25 @@ deploy: create-cluster push-image
       -n {{ namespace }} \
       --context {{ kube_ctx }} \
       --ignore-not-found
-    kubectl delete spu --all -n {{ namespace }} --context {{ kube_ctx }} --ignore-not-found
-    kubectl delete pvc --all -n {{ namespace }} --context {{ kube_ctx }} --ignore-not-found
+    KUBECONFIG={{ kubeconfig }} kubectl delete spu --all -n {{ namespace }} --context {{ kube_ctx }} --ignore-not-found
+    KUBECONFIG={{ kubeconfig }} kubectl delete pvc --all -n {{ namespace }} --context {{ kube_ctx }} --ignore-not-found
 
     helm upgrade --install fluvio-app ./k8-util/helm/fluvio-app \
       --namespace {{ namespace }} \
+      --kubeconfig {{ kubeconfig }} \
       --kube-context {{ kube_ctx }} \
       --set image.registry={{ registry }} \
       --set image.tag=dev \
       --set image.pullPolicy=Always \
       --set service.type=ClusterIP \
       --set serviceAccount.name=fluvio
-    kubectl patch configmap/spu-k8 -n {{ namespace }} --context {{ kube_ctx }} --type=merge -p '{
+    KUBECONFIG={{ kubeconfig }} kubectl patch configmap/spu-k8 -n {{ namespace }} --context {{ kube_ctx }} --type=merge -p '{
       "data": {
         "lbServiceAnnotations": "{\"fluvio.io/ingress-address\":\"fluvio-spu-main-0\"}"
       }
     }'
 
-    kubectl apply --context {{ kube_ctx }} -n {{ namespace }} -f - <<EOF
+    KUBECONFIG={{ kubeconfig }} kubectl apply --context {{ kube_ctx }} -n {{ namespace }} -f - <<EOF
     apiVersion: fluvio.infinyon.com/v1
     kind: SpuGroup
     metadata:
@@ -274,12 +277,12 @@ deploy: create-cluster push-image
     EOF
 
     echo "Waiting for SC deployment..."
-    kubectl rollout status deployment/fluvio-sc -n {{ namespace }} --context {{ kube_ctx }} --timeout=180s
-    until kubectl get statefulset/fluvio-spg-main -n {{ namespace }} --context {{ kube_ctx }} >/dev/null 2>&1; do
+    KUBECONFIG={{ kubeconfig }} kubectl rollout status deployment/fluvio-sc -n {{ namespace }} --context {{ kube_ctx }} --timeout=180s
+    until KUBECONFIG={{ kubeconfig }} kubectl get statefulset/fluvio-spg-main -n {{ namespace }} --context {{ kube_ctx }} >/dev/null 2>&1; do
       sleep 2
     done
-    SC_INTERNAL_IP=$(kubectl get svc fluvio-sc-internal -n {{ namespace }} --context {{ kube_ctx }} -o jsonpath='{.spec.clusterIP}')
-    kubectl patch statefulset/fluvio-spg-main -n {{ namespace }} --context {{ kube_ctx }} --type=merge -p "{
+    SC_INTERNAL_IP=$(KUBECONFIG={{ kubeconfig }} kubectl get svc fluvio-sc-internal -n {{ namespace }} --context {{ kube_ctx }} -o jsonpath='{.spec.clusterIP}')
+    KUBECONFIG={{ kubeconfig }} kubectl patch statefulset/fluvio-spg-main -n {{ namespace }} --context {{ kube_ctx }} --type=merge -p "{
       \"spec\": {
         \"template\": {
           \"spec\": {
@@ -293,10 +296,10 @@ deploy: create-cluster push-image
         }
       }
     }"
-    kubectl delete pod fluvio-spg-main-0 -n {{ namespace }} --context {{ kube_ctx }} --ignore-not-found
+    KUBECONFIG={{ kubeconfig }} kubectl delete pod fluvio-spg-main-0 -n {{ namespace }} --context {{ kube_ctx }} --ignore-not-found
     echo "Waiting for SPU StatefulSet..."
-    kubectl rollout status statefulset/fluvio-spg-main -n {{ namespace }} --context {{ kube_ctx }} --timeout=300s
-    kubectl get deploy,sts,svc,spugroup,spu -n {{ namespace }} --context {{ kube_ctx }}
+    KUBECONFIG={{ kubeconfig }} kubectl rollout status statefulset/fluvio-spg-main -n {{ namespace }} --context {{ kube_ctx }} --timeout=300s
+    KUBECONFIG={{ kubeconfig }} kubectl get deploy,sts,svc,spugroup,spu -n {{ namespace }} --context {{ kube_ctx }}
 
 # Run SC locally against k3d cluster
 run-sc:
@@ -306,7 +309,7 @@ run-sc:
 create-spugroup replicas="2":
     #!/usr/bin/env bash
     set -euo pipefail
-    kubectl apply --context {{ kube_ctx }} -f - <<EOF
+    KUBECONFIG={{ kubeconfig }} kubectl apply --context {{ kube_ctx }} -f - <<EOF
     apiVersion: fluvio.infinyon.com/v1
     kind: SpuGroup
     metadata:
@@ -374,11 +377,11 @@ e2e: create-cluster
 
     echo "=== Verifying resources ==="
     echo "--- SPU CRDs ---"
-    kubectl get spus -n {{ namespace }} --context {{ kube_ctx }}
+    KUBECONFIG={{ kubeconfig }} kubectl get spus -n {{ namespace }} --context {{ kube_ctx }}
     echo "--- Services ---"
-    kubectl get svc -n {{ namespace }} --context {{ kube_ctx }}
+    KUBECONFIG={{ kubeconfig }} kubectl get svc -n {{ namespace }} --context {{ kube_ctx }}
     echo "--- StatefulSets ---"
-    kubectl get statefulset -n {{ namespace }} --context {{ kube_ctx }}
+    KUBECONFIG={{ kubeconfig }} kubectl get statefulset -n {{ namespace }} --context {{ kube_ctx }}
 
     kill $SC_PID 2>/dev/null || true
     wait $SC_PID 2>/dev/null || true
