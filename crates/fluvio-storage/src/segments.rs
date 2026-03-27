@@ -139,6 +139,22 @@ impl SharedSegments {
         }
     }
 
+    /// Remove all segments, deleting their files. Returns the number of segments removed.
+    #[instrument(skip(self))]
+    pub(crate) async fn remove_all_segments(&self) -> usize {
+        let mut write = self.write().await;
+        let segments: Vec<ReadSegment> = write.drain_all();
+        drop(write);
+        self.min_offset.store(-1, MEM_ORDER);
+        let count = segments.len();
+        for segment in segments {
+            if let Err(err) = segment.remove().await {
+                error!("failed to remove segment during clear: {:#?}", err);
+            }
+        }
+        count
+    }
+
     #[instrument(skip(self))]
     async fn remove_segment(&self, base_offset: &Offset) {
         let mut write = self.write().await;
@@ -208,6 +224,15 @@ impl SegmentList {
         });
         self.max_offset = max_offset;
         self.min_offset = min_offset;
+    }
+
+    /// Drain all segments, returning them. Resets min/max offsets.
+    fn drain_all(&mut self) -> Vec<ReadSegment> {
+        let old_segments = std::mem::take(&mut self.segments);
+        let segments: Vec<ReadSegment> = old_segments.into_values().collect();
+        self.min_offset = -1;
+        self.max_offset = 0;
+        segments
     }
 
     /// remove segment and return min offset

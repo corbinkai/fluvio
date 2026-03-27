@@ -4,7 +4,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tracing::{debug, trace, instrument, info, error};
+use tracing::{debug, trace, instrument, info, warn, error};
 use anyhow::Result;
 
 use fluvio_future::fs::remove_file;
@@ -24,6 +24,7 @@ use crate::config::SharedReplicaConfig;
 use crate::StorageError;
 use crate::batch::FileBatchStream;
 use crate::index::OffsetPosition;
+use crate::repair;
 use crate::validator::LogValidationError;
 
 pub type MutableSegment = Segment<MutLogIndex, MutFileRecords>;
@@ -376,6 +377,30 @@ impl Segment<MutLogIndex, MutFileRecords> {
                 }
             }
         }
+
+        // Check for index corruption and repair if needed
+        if let Some(ref index_err) = validation.index_error {
+            warn!(
+                base_offset = self.base_offset,
+                index_error = %index_err,
+                "Index corruption detected, rebuilding from log"
+            );
+            let report = repair::repair_index(
+                self.msg_log.get_path(),
+                self.base_offset,
+                self.option.clone(),
+            )
+            .await?;
+            info!(
+                base_offset = self.base_offset,
+                batches_found = report.batches_found,
+                index_entries_after = report.index_entries_after,
+                "Index rebuilt successfully"
+            );
+            // Re-open the index after rebuild
+            self.index = MutLogIndex::open(self.base_offset, self.option.clone()).await?;
+        }
+
         self.end_offset = leo;
         Ok(self.end_offset)
     }

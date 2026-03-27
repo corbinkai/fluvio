@@ -42,6 +42,13 @@ sysinfo = { workspace = true }
 chrono = { workspace = true }
 mimalloc = { workspace = true }
 
+# Observability
+fastrace = { workspace = true }
+fastrace-opentelemetry = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+opentelemetry-otlp = { workspace = true }
+
 # Fluvio dependencies
 fluvio = { workspace = true }
 fluvio-auth = { workspace = true }

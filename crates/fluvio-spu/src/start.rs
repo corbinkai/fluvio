@@ -50,6 +50,9 @@ pub fn main_loop(opt: SpuOpt) {
 
         init_monitoring(ctx);
 
+        // Initialize OpenTelemetry metrics + fastrace tracing
+        crate::otel::init_otel(spu_config.id as i32);
+
         if let Some(tls_config) = tls_acceptor_option {
             proxy::start_proxy(spu_config, tls_config).await;
         }

@@ -13,6 +13,7 @@ cfg_if::cfg_if! {
         mod smartengine;
         mod monitoring;
         mod health;
+        mod otel;
         pub(crate) mod mirroring;
         pub use start::main_loop;
     }

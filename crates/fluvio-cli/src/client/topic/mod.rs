@@ -1,3 +1,4 @@
+mod clear;
 mod create;
 mod delete;
 mod describe;
@@ -25,6 +26,7 @@ mod cmd {
 
     use super::add_mirror::AddMirrorOpt;
     use super::add_partition::AddPartitionOpt;
+    use super::clear::ClearTopicOpt;
     use super::create::CreateTopicOpt;
     use super::delete::DeleteTopicOpt;
     use super::describe::DescribeTopicsOpt;
@@ -33,6 +35,13 @@ mod cmd {
     #[derive(Debug, Parser)]
     #[command(name = "topic", about = "Topic operations")]
     pub enum TopicCmd {
+        /// Clear all data from a Topic (delete and recreate)
+        #[command(
+            name = "clear",
+            help_template = COMMAND_TEMPLATE,
+        )]
+        Clear(ClearTopicOpt),
+
         /// Create a Topic with the given name
         #[command(
             name = "create",
@@ -84,6 +93,9 @@ mod cmd {
             fluvio: &Fluvio,
         ) -> Result<()> {
             match self {
+                Self::Clear(clear) => {
+                    clear.process(fluvio).await?;
+                }
                 Self::Create(create) => {
                     create.process(fluvio).await?;
                 }

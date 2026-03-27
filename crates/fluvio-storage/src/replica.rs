@@ -319,6 +319,32 @@ impl FileReplica {
         self.update_high_watermark(self.get_leo()).await
     }
 
+    /// Clear all data from this replica.
+    /// Removes all previous (immutable) segments, closes the active segment,
+    /// and creates a fresh active segment at the current LEO.
+    /// If `reset_hw` is true, also resets the high watermark checkpoint to the current LEO.
+    /// Returns the new offset (LEO at time of clear).
+    #[instrument(skip(self))]
+    pub async fn clear_data(&mut self, reset_hw: bool) -> Result<Offset, StorageError> {
+        let removed_count = self.prev_segments.remove_all_segments().await;
+        info!(removed_count, "removed previous segments");
+
+        let current_leo = self.get_leo();
+        self.active_segment.close().await?;
+        self.active_segment = MutableSegment::create(current_leo, self.option.clone()).await?;
+
+        if reset_hw {
+            self.commit_checkpoint.write(current_leo);
+        }
+
+        self.size.store_prev(0);
+        self.size
+            .store_active(self.active_segment.occupied_memory());
+
+        info!(current_leo, reset_hw, "replica data cleared");
+        Ok(current_leo)
+    }
+
     /// read all uncommitted records
     #[allow(unused)]
     #[instrument(skip(self, max_len))]
@@ -1246,5 +1272,137 @@ mod tests {
                 max_segment_size: 100,
             }
         ));
+    }
+
+    #[fluvio_future::test]
+    async fn test_clear_data_empty_replica() {
+        let option = base_option("test_clear_empty");
+        let mut replica = create_replica("test", 0, option).await;
+
+        assert_eq!(replica.get_leo(), 0);
+        assert_eq!(replica.get_hw(), 0);
+
+        let new_offset = replica.clear_data(false).await.expect("clear");
+        assert_eq!(new_offset, 0);
+        assert_eq!(replica.get_leo(), 0);
+        assert_eq!(replica.get_hw(), 0);
+    }
+
+    #[fluvio_future::test]
+    async fn test_clear_data_with_records() {
+        let option = base_option("test_clear_records");
+        let mut replica = create_replica("test", 0, option).await;
+
+        // Write some batches
+        replica
+            .write_batch(&mut create_batch())
+            .await
+            .expect("write");
+        replica
+            .write_batch(&mut create_batch())
+            .await
+            .expect("write");
+        replica
+            .update_high_watermark_to_end()
+            .await
+            .expect("update hw");
+
+        let leo_before = replica.get_leo();
+        assert_eq!(leo_before, 4); // 2 batches * 2 records each
+        assert_eq!(replica.get_hw(), 4);
+
+        let new_offset = replica.clear_data(false).await.expect("clear");
+        assert_eq!(new_offset, 4);
+        assert_eq!(replica.get_leo(), 4);
+        // hw should be unchanged since reset_hw is false
+        assert_eq!(replica.get_hw(), 4);
+
+        // Writing new data should succeed starting from LEO
+        replica
+            .write_batch(&mut create_batch())
+            .await
+            .expect("write after clear");
+        assert_eq!(replica.get_leo(), 6);
+    }
+
+    #[fluvio_future::test]
+    async fn test_clear_data_with_rollover() {
+        let mut option = base_option("test_clear_rollover");
+        // small segment size to force rollover
+        option.segment_max_bytes = 100;
+        option.index_max_interval_bytes = 0;
+
+        let producer = BatchProducer::builder()
+            .records(2u16)
+            .record_generator(Arc::new(|_, _| Record::new("1")))
+            .build()
+            .expect("batch");
+
+        let mut replica = create_replica("test", 0, option).await;
+
+        // Write enough to cause rollover (creates prev_segments)
+        replica
+            .write_batch(&mut producer.generate_batch())
+            .await
+            .expect("write 1");
+        replica
+            .write_batch(&mut producer.generate_batch())
+            .await
+            .expect("write 2");
+        replica
+            .write_batch(&mut producer.generate_batch())
+            .await
+            .expect("write 3 - triggers rollover");
+        replica
+            .update_high_watermark_to_end()
+            .await
+            .expect("update hw");
+
+        let reader = replica.prev_segments.read().await;
+        assert!(reader.len() > 0, "should have prev segments after rollover");
+        drop(reader);
+
+        let leo_before = replica.get_leo();
+        assert!(leo_before > 0);
+
+        let new_offset = replica.clear_data(true).await.expect("clear");
+        assert_eq!(new_offset, leo_before);
+
+        // prev_segments should be empty
+        let reader = replica.prev_segments.read().await;
+        assert_eq!(reader.len(), 0, "prev segments should be cleared");
+        drop(reader);
+
+        // Size should reflect only the new empty active segment
+        let size = replica.get_partition_size();
+        assert!(size < 100, "size should be small after clear, got {size}");
+
+        // Can still write
+        replica
+            .write_batch(&mut producer.generate_batch())
+            .await
+            .expect("write after clear");
+        assert_eq!(replica.get_leo(), leo_before + 2);
+    }
+
+    #[fluvio_future::test]
+    async fn test_clear_data_reset_hw() {
+        let option = base_option("test_clear_reset_hw");
+        let mut replica = create_replica("test", 0, option).await;
+
+        replica
+            .write_batch(&mut create_batch())
+            .await
+            .expect("write");
+        replica
+            .update_high_watermark_to_end()
+            .await
+            .expect("update hw");
+        assert_eq!(replica.get_hw(), 2);
+
+        let new_offset = replica.clear_data(true).await.expect("clear");
+        assert_eq!(new_offset, 2);
+        // hw should be reset to LEO when reset_hw is true
+        assert_eq!(replica.get_hw(), 2);
     }
 }
