@@ -1,0 +1,35 @@
+apiVersion: skupper.io/v2alpha1
+kind: Listener
+metadata:
+  name: uptrace-grpc
+spec:
+  routingKey: uptrace-grpc
+  host: uptrace
+  port: 14317
+---
+apiVersion: skupper.io/v2alpha1
+kind: Listener
+metadata:
+  name: uptrace-http
+spec:
+  routingKey: uptrace-http
+  host: uptrace-http
+  port: 14319
+---
+apiVersion: skupper.io/v2alpha1
+kind: Listener
+metadata:
+  name: mailcrab-smtp
+spec:
+  routingKey: mailcrab-smtp
+  host: mailcrab
+  port: 1025
+---
+apiVersion: skupper.io/v2alpha1
+kind: Listener
+metadata:
+  name: mailcrab-web
+spec:
+  routingKey: mailcrab-web
+  host: mailcrab-web
+  port: 1080

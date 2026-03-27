@@ -381,18 +381,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-native-tls"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9343dc5acf07e79ff82d0c37899f079db3534d99f189a1837c8e549c99405bec"
-dependencies = [
- "futures-util",
- "native-tls",
- "thiserror 1.0.69",
- "url",
-]
-
-[[package]]
 name = "async-net"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2626,7 +2614,6 @@ dependencies = [
  "async-fs",
  "async-global-executor",
  "async-io",
- "async-native-tls",
  "async-net",
  "async-task",
  "async-trait",
@@ -2637,7 +2624,6 @@ dependencies = [
  "futures-rustls",
  "futures-util",
  "memmap2",
- "native-tls",
  "nix 0.30.1",
  "openssl",
  "openssl-sys",
@@ -4673,6 +4659,7 @@ dependencies = [
  "k8-types",
  "pin-utils",
  "rand 0.8.5",
+ "rustls 0.23.28",
  "serde",
  "serde_json",
  "serde_qs",
@@ -5326,23 +5313,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7bddcd3bf5144b6392de80e04c347cd7fab2508f6df16a85fc496ecd5cec39bc"
 dependencies = [
  "rand 0.8.5",
-]
-
-[[package]]
-name = "native-tls"
-version = "0.2.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87de3442987e9dbec73158d5c715e7ad9072fda936bb03d19d7fa10e00520f0e"
-dependencies = [
- "libc",
- "log",
- "openssl",
- "openssl-probe 0.1.6",
- "openssl-sys",
- "schannel",
- "security-framework 2.11.1",
- "security-framework-sys",
- "tempfile",
 ]
 
 [[package]]

@@ -49,7 +49,7 @@ fluvio-future = { workspace = true, features = [
     "fixture",
     "fs",
     "zero_copy",
-    "native_tls",
+    "rust_tls",
 ] }
 fluvio-types = { workspace = true, features = ["events"] }
 
