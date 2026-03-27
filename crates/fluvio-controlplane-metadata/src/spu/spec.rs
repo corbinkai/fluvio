@@ -266,7 +266,7 @@ impl IngressAddr {
 #[cfg_attr(
     feature = "use_serde",
     derive(serde::Serialize, serde::Deserialize),
-    serde(rename_all = "camelCase")
+    serde(rename_all = "camelCase", default)
 )]
 pub struct Endpoint {
     pub port: u16,
@@ -518,6 +518,39 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(port.addr(), ":9005");
+    }
+
+    #[cfg(feature = "use_serde")]
+    #[test]
+    fn deserializes_spu_without_endpoint_encryption_fields() {
+        let spec: SpuSpec = serde_json::from_value(serde_json::json!({
+            "spuId": 0,
+            "spuType": "Managed",
+            "privateEndpoint": {
+                "host": "fluvio-spg-main-0.fluvio-spg-main.fluvio-system.svc.cluster.local",
+                "port": 9006
+            },
+            "publicEndpoint": {
+                "ingress": [
+                    { "hostname": "fluvio-spu-main-0" }
+                ],
+                "port": 9005
+            },
+            "publicEndpointLocal": {
+                "host": "fluvio-spu-main-0.fluvio-system.svc.cluster.local",
+                "port": 9005
+            }
+        }))
+        .expect("spu spec should deserialize with default plaintext encryption");
+
+        assert_eq!(spec.private_endpoint.encryption, EncryptionEnum::PLAINTEXT);
+        assert_eq!(spec.public_endpoint.encryption, EncryptionEnum::PLAINTEXT);
+        assert_eq!(
+            spec.public_endpoint_local
+                .expect("local endpoint should be present")
+                .encryption,
+            EncryptionEnum::PLAINTEXT
+        );
     }
 
     #[test]

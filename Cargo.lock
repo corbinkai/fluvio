@@ -2759,7 +2759,6 @@ dependencies = [
  "fluvio-types",
  "flv-tls-proxy",
  "futures-util",
- "k8-client",
  "k8s-openapi",
  "kube",
  "mimalloc",

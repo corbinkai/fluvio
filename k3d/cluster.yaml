@@ -6,9 +6,11 @@ servers: 1
 agents: 2
 image: rancher/k3s:v1.28.5-k3s1
 registries:
-  create:
-    name: koshee-fluvio-registry.localhost
-    hostPort: "16050"
+  config: |
+    mirrors:
+      "koshee-dev-zot:5000":
+        endpoint:
+          - http://koshee-dev-zot:5000
 ports:
   - port: 16080:80
     nodeFilters: [loadbalancer]

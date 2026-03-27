@@ -10,8 +10,8 @@ use tracing::info;
 use fluvio_future::{task::run_block_on, timer::sleep};
 use fluvio_stream_dispatcher::metadata::{SharedClient, MetadataClient, local::LocalMetadataStorage};
 use fluvio_stream_dispatcher::metadata::kube_rs::KubeClient;
+use fluvio_stream_dispatcher::metadata::memory_client::InMemoryClient;
 use fluvio_stream_model::{store::k8::K8MetaItem, core::MetadataItem};
-use k8_client::memory::MemoryClient;
 
 use crate::{
     cli::{ScOpt, TlsConfig, RunMode},
@@ -182,19 +182,19 @@ mod proxy {
     }
 }
 
-async fn create_memory_client(path: PathBuf) -> Result<Arc<MemoryClient>> {
+async fn create_memory_client(path: PathBuf) -> Result<Arc<InMemoryClient>> {
     use std::ops::Deref;
     use fluvio_sc_schema::remote_file::RemoteMetadataFile;
-    use k8_client::meta_client::MetadataClient;
+    use crate::stores::topic::TopicSpec;
 
     let metadata_file = RemoteMetadataFile::open(path)?;
     let config = metadata_file.deref();
-    let client = MemoryClient::default();
+    let client = InMemoryClient::new();
 
     info!(topics = config.topics.len(), "loading topics");
     for value in &config.topics {
         info!(name = value.metadata.name, "read topic");
-        client.create_item(value.as_input()).await?;
+        client.load_k8_obj::<TopicSpec>(value.clone()).await?;
     }
 
     Ok(Arc::new(client))

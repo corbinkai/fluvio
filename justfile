@@ -210,8 +210,7 @@ build-musl:
 push-image: build-musl
     #!/usr/bin/env bash
     set -euo pipefail
-    TAG=$(date +%s)
-    HOST_IMAGE="{{ registry_host }}/fluvio-run:${TAG}"
+    HOST_IMAGE="{{ registry_host }}/fluvio:dev"
 
     echo "Building Docker image..."
     docker build \
@@ -222,24 +221,81 @@ push-image: build-musl
 
     echo "Pushing to k3d registry..."
     skopeo copy --tmpdir /tmp --dest-tls-verify=false "docker-daemon:${HOST_IMAGE}" "docker://${HOST_IMAGE}"
-    echo "IMAGE={{ registry }}/fluvio-run:${TAG}"
+    echo "IMAGE={{ registry }}/fluvio:dev"
 
 # Deploy SC to k3d cluster
-deploy: push-image
+deploy: create-cluster push-image
     #!/usr/bin/env bash
     set -euo pipefail
-    TAG=$(docker images {{ registry }}/fluvio-run --format '{{ '{{' }}.Tag{{ '}}' }}' | head -1)
-    IMAGE="{{ registry }}/fluvio-run:${TAG}"
+    IMAGE="{{ registry }}/fluvio:dev"
 
     echo "Deploying SC with image ${IMAGE}..."
-    # Create spu-k8 ConfigMap if not exists
-    kubectl create configmap spu-k8 \
-      --from-literal=image="${IMAGE}" \
-      -n {{ namespace }} --context {{ kube_ctx }} \
-      --dry-run=client -o yaml | kubectl apply --context {{ kube_ctx }} -f -
+    kubectl delete configmap/spu-k8 \
+      deployment/fluvio-sc \
+      service/fluvio-sc-public \
+      service/fluvio-sc-internal \
+      service/fluvio-spg-main \
+      service/fluvio-spu-main-0 \
+      service/fluvio-spu-main-1 \
+      serviceaccount/fluvio \
+      role/fluvio \
+      rolebinding/fluvio \
+      statefulset/fluvio-spg-main \
+      spugroup/main \
+      -n {{ namespace }} \
+      --context {{ kube_ctx }} \
+      --ignore-not-found
+    kubectl delete spu --all -n {{ namespace }} --context {{ kube_ctx }} --ignore-not-found
+    kubectl delete pvc --all -n {{ namespace }} --context {{ kube_ctx }} --ignore-not-found
 
-    # TODO: Deploy SC as a Deployment once Helm chart is ready
-    echo "Run SC locally for now: ./target/debug/fluvio-run sc --namespace {{ namespace }} --k8"
+    helm upgrade --install fluvio-app ./k8-util/helm/fluvio-app \
+      --namespace {{ namespace }} \
+      --kube-context {{ kube_ctx }} \
+      --set image.registry={{ registry }} \
+      --set image.tag=dev \
+      --set service.type=ClusterIP \
+      --set serviceAccount.name=fluvio
+    kubectl patch configmap/spu-k8 -n {{ namespace }} --context {{ kube_ctx }} --type=merge -p '{
+      "data": {
+        "lbServiceAnnotations": "{\"fluvio.io/ingress-address\":\"fluvio-spu-main-0\"}"
+      }
+    }'
+
+    kubectl apply --context {{ kube_ctx }} -n {{ namespace }} -f - <<EOF
+    apiVersion: fluvio.infinyon.com/v1
+    kind: SpuGroup
+    metadata:
+      name: main
+      namespace: {{ namespace }}
+    spec:
+      replicas: 1
+      minId: 0
+    EOF
+
+    echo "Waiting for SC deployment..."
+    kubectl rollout status deployment/fluvio-sc -n {{ namespace }} --context {{ kube_ctx }} --timeout=180s
+    until kubectl get statefulset/fluvio-spg-main -n {{ namespace }} --context {{ kube_ctx }} >/dev/null 2>&1; do
+      sleep 2
+    done
+    SC_INTERNAL_IP=$(kubectl get svc fluvio-sc-internal -n {{ namespace }} --context {{ kube_ctx }} -o jsonpath='{.spec.clusterIP}')
+    kubectl patch statefulset/fluvio-spg-main -n {{ namespace }} --context {{ kube_ctx }} --type=merge -p "{
+      \"spec\": {
+        \"template\": {
+          \"spec\": {
+            \"hostAliases\": [
+              {
+                \"ip\": \"${SC_INTERNAL_IP}\",
+                \"hostnames\": [\"fluvio-sc-internal.fluvio-system.svc.cluster.local\"]
+              }
+            ]
+          }
+        }
+      }
+    }"
+    kubectl rollout restart statefulset/fluvio-spg-main -n {{ namespace }} --context {{ kube_ctx }}
+    echo "Waiting for SPU StatefulSet..."
+    kubectl rollout status statefulset/fluvio-spg-main -n {{ namespace }} --context {{ kube_ctx }} --timeout=300s
+    kubectl get deploy,sts,svc,spugroup,spu -n {{ namespace }} --context {{ kube_ctx }}
 
 # Run SC locally against k3d cluster
 run-sc:

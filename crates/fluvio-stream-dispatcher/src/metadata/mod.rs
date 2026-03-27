@@ -2,6 +2,8 @@
 pub mod k8;
 #[cfg(feature = "kube")]
 pub mod kube_rs;
+#[cfg(any(feature = "k8", feature = "kube"))]
+pub mod memory_client;
 #[cfg(feature = "local")]
 pub mod local;
 

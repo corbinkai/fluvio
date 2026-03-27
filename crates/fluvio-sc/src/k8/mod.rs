@@ -7,6 +7,3 @@
 
 pub(crate) mod controllers;
 mod objects;
-
-#[cfg(test)]
-mod fixture;

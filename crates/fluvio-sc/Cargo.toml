@@ -52,8 +52,7 @@ fluvio-sc-schema = { workspace = true, features = ["use_serde", "json"] }
 fluvio-stream-model = { workspace = true, features = ["k8", "use_serde"]  }
 fluvio-controlplane = { workspace = true }
 fluvio-controlplane-metadata = { workspace = true, features = ["k8","serde"] }
-fluvio-stream-dispatcher = { workspace = true, features = ["k8", "kube", "local"]}
-k8-client = { workspace = true, features = ["memory_client"] }
+fluvio-stream-dispatcher = { workspace = true, features = ["kube", "local"]}
 k8s-openapi = { workspace = true }
 kube = { workspace = true }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }

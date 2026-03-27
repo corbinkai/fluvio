@@ -4,6 +4,6 @@ clusterName: koshee-fluvio
 registryName: koshee-fluvio-registry.localhost
 tunnelPrefix: local-fluvio
 uptrace:
-  endpoint: http://k3d-koshee-infra-server-0:9317
-  httpEndpoint: http://k3d-koshee-infra-server-0:9319
-  dsn: "http://fluvio_secret@k3d-koshee-infra-server-0:9319/8"
+  endpoint: http://uptrace:14317
+  httpEndpoint: http://uptrace-http:14319
+  dsn: "http://fluvio_secret@uptrace-http:14319/8"
