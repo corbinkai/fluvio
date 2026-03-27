@@ -13,7 +13,7 @@ path = "src/lib.rs"
 
 [features]
 use_serde = ["serde"]
-k8 = ["use_serde", "k8-types"]
+k8 = ["use_serde", "serde_json"]
 fixture = ["serde"]
 fixtures = []
 
@@ -21,11 +21,11 @@ fixtures = []
 async-lock = { workspace = true }
 event-listener = { workspace = true }
 once_cell = { workspace = true }
-serde = { workspace = true, features = ['derive'], optional = true }
+serde = { workspace = true, features = ['derive', 'std'], optional = true }
 tracing = { workspace = true }
 
 # Fluvio dependencies
-k8-types = { workspace = true, optional = true, features = ["app"] }
+serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros"] }

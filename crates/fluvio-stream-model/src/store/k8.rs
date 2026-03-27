@@ -220,7 +220,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use k8_types::OwnerReferences;
+    use crate::k8_types::OwnerReferences;
 
     use super::*;
 
