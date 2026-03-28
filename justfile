@@ -221,16 +221,40 @@ push-image: build-musl
     set -euo pipefail
     HOST_IMAGE="{{ registry_host }}/fluvio:dev"
 
+    # Copy binary for the prebuilt Dockerfile stage
+    cp target/x86_64-unknown-linux-musl/debug/fluvio-run fluvio-run
+    trap 'rm -f fluvio-run' EXIT
+
     echo "Building Docker image..."
     docker build \
-      --build-arg BINARY=./target/x86_64-unknown-linux-musl/debug/fluvio-run \
-      -f k8-util/docker/Dockerfile.fluvio-run \
+      -f k8-util/docker/Dockerfile \
       -t "${HOST_IMAGE}" \
       .
 
     echo "Pushing to k3d registry..."
     skopeo copy --tmpdir /tmp --dest-tls-verify=false "docker-daemon:${HOST_IMAGE}" "docker://${HOST_IMAGE}"
     echo "IMAGE={{ registry }}/fluvio:dev"
+
+# Build and push namespace-gc image to k3d registry
+push-namespace-gc: build-musl-gc
+    #!/usr/bin/env bash
+    set -euo pipefail
+    HOST_IMAGE="{{ registry_host }}/fluvio-namespace-gc:dev"
+
+    cp target/x86_64-unknown-linux-musl/debug/fluvio-namespace-gc fluvio-namespace-gc
+    trap 'rm -f fluvio-namespace-gc' EXIT
+
+    docker build \
+      -f k8-util/docker/Dockerfile.namespace-gc \
+      -t "${HOST_IMAGE}" \
+      .
+
+    skopeo copy --tmpdir /tmp --dest-tls-verify=false "docker-daemon:${HOST_IMAGE}" "docker://${HOST_IMAGE}"
+    echo "IMAGE={{ registry }}/fluvio-namespace-gc:dev"
+
+# Build namespace-gc with musl
+build-musl-gc:
+    cargo zigbuild --bin fluvio-namespace-gc -p fluvio-namespace-gc --target x86_64-unknown-linux-musl
 
 # Deploy SC to k3d cluster
 deploy: create-cluster push-image
@@ -442,3 +466,33 @@ clean:
 # Full clean: build artifacts + k3d cluster
 clean-all: clean
     k3d cluster delete {{ cluster_name }} 2>/dev/null || true
+
+# ============================================================
+# GHCR IMAGE PUSH (emergency / manual)
+# ============================================================
+
+ghcr_registry := "ghcr.io"
+ghcr_org      := "koshee-ai"
+
+# Cross-compile and push fluvio-run to GHCR (arm64 via cargo-zigbuild)
+emergency-push-fluvio tag="latest":
+    docker buildx build \
+      --platform linux/arm64 \
+      --build-arg BUILD_MODE=zigbuild \
+      -f k8-util/docker/Dockerfile \
+      --push \
+      -t {{ ghcr_registry }}/{{ ghcr_org }}/fluvio:{{ tag }} \
+      .
+
+# Cross-compile and push namespace-gc to GHCR (arm64 via cargo-zigbuild)
+emergency-push-gc tag="latest":
+    docker buildx build \
+      --platform linux/arm64 \
+      --build-arg BUILD_MODE=zigbuild \
+      -f k8-util/docker/Dockerfile.namespace-gc \
+      --push \
+      -t {{ ghcr_registry }}/{{ ghcr_org }}/fluvio-namespace-gc:{{ tag }} \
+      .
+
+# Push all images to GHCR
+emergency-push tag="latest": (emergency-push-fluvio tag) (emergency-push-gc tag)

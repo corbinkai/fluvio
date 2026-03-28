@@ -27,7 +27,7 @@ mod context {
     use super::MetadataStoreObject;
     use super::{LocalStore, ChangeListener, MetadataChanges};
 
-    #[cfg(feature = "k8")]
+    #[cfg(feature = "kube")]
     pub type K8ChangeListener<S> = ChangeListener<S, crate::store::k8::K8MetaItem>;
 
     pub type StoreChanges<S, MetaContext> = MetadataChanges<S, MetaContext>;

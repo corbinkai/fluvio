@@ -250,11 +250,18 @@ impl GenerateCmd {
         let name = self.name.clone().unwrap_or_else(|| "my-smartmodule".to_string());
 
         // Template source: check user git, user path, develop, then default to built-in
-        let source = if let Some(_git_url) = self.template_repo {
-            // Git template support requires the "git" feature on fluvio-generate
-            // For now, fall back to embedded templates
-            debug!("Git template repos not yet supported, using embedded templates");
-            TemplateSource::Embedded(&SMART_MODULE_TEMPLATE)
+        let source = if let Some(git_url) = self.template_repo {
+            let tmp_dir = tempfile::tempdir()?;
+            let branch = self.template_repo_branch.or(self.template_repo_tag);
+            debug!(%git_url, ?branch, "Cloning template repo");
+            fluvio_generate::git::clone_repo(&git_url, branch.as_deref(), tmp_dir.path())?;
+            let template_subdir = tmp_dir.path().join("smartmodule/cargo_template");
+            if !template_subdir.exists() {
+                return Err(anyhow!(
+                    "Template repo does not contain smartmodule/cargo_template directory"
+                ));
+            }
+            TemplateSource::LocalDir(template_subdir)
         } else if let Some(path) = self.template_path {
             TemplateSource::LocalDir(PathBuf::from(path))
         } else {

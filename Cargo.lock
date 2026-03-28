@@ -1677,7 +1677,7 @@ version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "16f5094c54661b38d03bd7e50df373292118db60b585c08a411c6d840017fe7d"
 dependencies = [
- "dirs-sys 0.5.0",
+ "dirs-sys",
 ]
 
 [[package]]
@@ -1692,32 +1692,11 @@ dependencies = [
 
 [[package]]
 name = "dirs"
-version = "5.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44c45a9d03d6676652bcb5e724c7e988de1acad23a711b5217ab9cbecbec2225"
-dependencies = [
- "dirs-sys 0.4.1",
-]
-
-[[package]]
-name = "dirs"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3e8aa94d75141228480295a7d0e7feb620b1a5ad9f12bc40be62411e38cce4e"
 dependencies = [
- "dirs-sys 0.5.0",
-]
-
-[[package]]
-name = "dirs-sys"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "520f05a5cbd335fae5a99ff7a6ab8627577660ee5cfd6a94a6a929b52ff0321c"
-dependencies = [
- "libc",
- "option-ext",
- "redox_users 0.4.6",
- "windows-sys 0.48.0",
+ "dirs-sys",
 ]
 
 [[package]]
@@ -2077,7 +2056,7 @@ dependencies = [
  "cfg-if",
  "chrono",
  "derive_builder",
- "dirs 6.0.0",
+ "dirs",
  "event-listener",
  "fluvio-compression",
  "fluvio-future",
@@ -2117,7 +2096,7 @@ dependencies = [
  "chrono",
  "fluvio-hub-protocol",
  "hex",
- "http 1.3.1",
+ "http",
  "octocrab",
  "pathdiff",
  "semver 1.0.26",
@@ -2186,7 +2165,7 @@ dependencies = [
  "anyhow",
  "cfg-if",
  "clap",
- "dirs 6.0.0",
+ "dirs",
  "fluvio-types",
  "semver 1.0.26",
  "serde",
@@ -2203,7 +2182,7 @@ dependencies = [
  "assert_cmd",
  "cfg-if",
  "clap",
- "dirs 6.0.0",
+ "dirs",
  "fluvio-channel",
  "fluvio-cli-common",
  "fluvio-future",
@@ -2288,7 +2267,7 @@ dependencies = [
  "fluvio-types",
  "hex",
  "home",
- "http 1.3.1",
+ "http",
  "semver 1.0.26",
  "serde",
  "serde-tuple-vec-map",
@@ -2556,9 +2535,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "gix",
+ "globset",
  "include_dir",
  "liquid",
  "liquid-core",
+ "liquid-derive",
+ "regex",
  "tempfile",
  "tracing",
 ]
@@ -2581,7 +2563,7 @@ name = "fluvio-hub-protocol"
 version = "0.0.0"
 dependencies = [
  "cargo_toml",
- "dirs 6.0.0",
+ "dirs",
  "fluvio-controlplane-metadata",
  "fluvio-types",
  "serde",
@@ -2625,7 +2607,7 @@ dependencies = [
 name = "fluvio-package-index"
 version = "0.50.2"
 dependencies = [
- "http 1.3.1",
+ "http",
  "once_cell",
  "semver 1.0.26",
  "serde",
@@ -2938,7 +2920,6 @@ dependencies = [
  "fluvio-stream-model",
  "fluvio-types",
  "futures-util",
- "k8-client",
  "k8s-openapi",
  "kube",
  "once_cell",
@@ -3078,7 +3059,7 @@ dependencies = [
  "comfy-table",
  "current_platform",
  "dialoguer",
- "dirs 6.0.0",
+ "dirs",
  "fluvio-artifacts-util",
  "fluvio-future",
  "fs_extra",
@@ -4198,22 +4179,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8d1add55171497b4705a648c6b583acafb01d58050a51727785f0b2c8e0a2b2"
 
 [[package]]
-name = "h2"
-version = "0.3.26"
+name = "globset"
+version = "0.4.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81fe527a889e1532da5c525686d96d4c2e74cdd345badf8dfef9f6b39dd5f5e8"
+checksum = "52dfc19153a48bde0cbd630453615c8151bce3a5adfac7a0aebfbf0a1e1f57e3"
 dependencies = [
- "bytes",
- "fnv",
- "futures-core",
- "futures-sink",
- "futures-util",
- "http 0.2.12",
- "indexmap 2.9.0",
- "slab",
- "tokio",
- "tokio-util",
- "tracing",
+ "aho-corasick",
+ "bstr",
+ "log",
+ "regex-automata",
+ "regex-syntax",
 ]
 
 [[package]]
@@ -4227,7 +4202,7 @@ dependencies = [
  "fnv",
  "futures-core",
  "futures-sink",
- "http 1.3.1",
+ "http",
  "indexmap 2.9.0",
  "slab",
  "tokio",
@@ -4335,7 +4310,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "headers-core",
- "http 1.3.1",
+ "http",
  "httpdate",
  "mime",
  "sha1",
@@ -4347,7 +4322,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "54b4a22553d4242c49fddb9ba998a99962b5cc6f22cb5a3482bec22522403ce4"
 dependencies = [
- "http 1.3.1",
+ "http",
 ]
 
 [[package]]
@@ -4397,12 +4372,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hostfile"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d72fd847c96f06bdb098b085660dca099381b7b14314f771deb3add755399e0c"
-
-[[package]]
 name = "hostname"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4411,17 +4380,6 @@ dependencies = [
  "cfg-if",
  "libc",
  "windows-link",
-]
-
-[[package]]
-name = "http"
-version = "0.2.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "601cbb57e577e2f5ef5be8e7b83f0f63994f25aa94d673e54a92d5c516d101f1"
-dependencies = [
- "bytes",
- "fnv",
- "itoa",
 ]
 
 [[package]]
@@ -4437,23 +4395,12 @@ dependencies = [
 
 [[package]]
 name = "http-body"
-version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ceab25649e9960c0311ea418d17bee82c0dcec1bd053b5f9a66e265a693bed2"
-dependencies = [
- "bytes",
- "http 0.2.12",
- "pin-project-lite",
-]
-
-[[package]]
-name = "http-body"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1efedce1fb8e6913f23e0c92de8e62cd5b772a67e7b3946df930a62566c93184"
 dependencies = [
  "bytes",
- "http 1.3.1",
+ "http",
 ]
 
 [[package]]
@@ -4464,8 +4411,8 @@ checksum = "b021d93e26becf5dc7e1b75b1bed1fd93124b374ceb73f43d4d4eafec896a64a"
 dependencies = [
  "bytes",
  "futures-core",
- "http 1.3.1",
- "http-body 1.0.1",
+ "http",
+ "http-body",
  "pin-project-lite",
 ]
 
@@ -4499,29 +4446,6 @@ dependencies = [
 
 [[package]]
 name = "hyper"
-version = "0.14.32"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41dfc780fdec9373c01bae43289ea34c972e40ee3c9f6b3c8801a35f35586ce7"
-dependencies = [
- "bytes",
- "futures-channel",
- "futures-core",
- "futures-util",
- "h2 0.3.26",
- "http 0.2.12",
- "http-body 0.4.6",
- "httparse",
- "httpdate",
- "itoa",
- "pin-project-lite",
- "tokio",
- "tower-service",
- "tracing",
- "want",
-]
-
-[[package]]
-name = "hyper"
 version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cc2b571658e38e0c01b1fdca3bbbe93c00d3d71693ff2770043f8c29bc7d6f80"
@@ -4529,9 +4453,9 @@ dependencies = [
  "bytes",
  "futures-channel",
  "futures-util",
- "h2 0.4.13",
- "http 1.3.1",
- "http-body 1.0.1",
+ "h2",
+ "http",
+ "http-body",
  "httparse",
  "itoa",
  "pin-project-lite",
@@ -4549,8 +4473,8 @@ dependencies = [
  "bytes",
  "futures-util",
  "headers",
- "http 1.3.1",
- "hyper 1.6.0",
+ "http",
+ "hyper",
  "hyper-rustls",
  "hyper-util",
  "pin-project-lite",
@@ -4566,8 +4490,8 @@ version = "0.27.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03a01595e11bdcec50946522c32dde3fc6914743000a68b93000965f2f02406d"
 dependencies = [
- "http 1.3.1",
- "hyper 1.6.0",
+ "http",
+ "hyper",
  "hyper-util",
  "log",
  "rustls 0.23.28",
@@ -4585,7 +4509,7 @@ version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b90d566bffbce6a75bd8b09a05aa8c2cb1fabb6cb348f8840c9e4c90a0d83b0"
 dependencies = [
- "hyper 1.6.0",
+ "hyper",
  "hyper-util",
  "pin-project-lite",
  "tokio",
@@ -4603,9 +4527,9 @@ dependencies = [
  "futures-channel",
  "futures-core",
  "futures-util",
- "http 1.3.1",
- "http-body 1.0.1",
- "hyper 1.6.0",
+ "http",
+ "http-body",
+ "hyper",
  "ipnet",
  "libc",
  "percent-encoding",
@@ -5091,92 +5015,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "k8-client"
-version = "14.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc82268c81c303bf069b7323a29f384a0cd1411db7fd1eb00991abfdddcdd566"
-dependencies = [
- "anyhow",
- "async-channel",
- "async-lock",
- "async-trait",
- "base64 0.22.1",
- "bytes",
- "cfg-if",
- "fluvio-future",
- "futures-util",
- "http 0.2.12",
- "hyper 0.14.32",
- "k8-config",
- "k8-diff",
- "k8-metadata-client",
- "k8-types",
- "pin-utils",
- "rand 0.8.5",
- "rustls 0.23.28",
- "serde",
- "serde_json",
- "serde_qs",
- "serde_yaml 0.9.34+deprecated",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "k8-config"
-version = "3.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3736cb93ace782ea0f88f586435f71d312540a6acb11d3f34bc67ebc54d04e0"
-dependencies = [
- "dirs 5.0.1",
- "hostfile",
- "serde",
- "serde_json",
- "serde_yaml 0.9.34+deprecated",
- "thiserror 1.0.69",
- "tracing",
-]
-
-[[package]]
-name = "k8-diff"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef435d912eeb448129d7ae11d3c497691f1f383d2d2ff1dff4365a81c7bd4f3b"
-dependencies = [
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
-name = "k8-metadata-client"
-version = "8.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92b4c9465417ccfae7dd534d3c3e17e457cbdc3672ae6e9279406dbe5bb58b1f"
-dependencies = [
- "anyhow",
- "async-trait",
- "futures-util",
- "k8-diff",
- "k8-types",
- "pin-utils",
- "serde",
- "serde_json",
- "serde_qs",
- "tracing",
-]
-
-[[package]]
-name = "k8-types"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a03d75bcb5555871dcffa40538fee4e59d38e3d21457c7c19108a31a76a69122"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "k8s-openapi"
 version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5224,10 +5062,10 @@ dependencies = [
  "either",
  "futures",
  "home",
- "http 1.3.1",
- "http-body 1.0.1",
+ "http",
+ "http-body",
  "http-body-util",
- "hyper 1.6.0",
+ "hyper",
  "hyper-http-proxy",
  "hyper-rustls",
  "hyper-timeout",
@@ -5258,7 +5096,7 @@ checksum = "97aa830b288a178a90e784d1b0f1539f2d200d2188c7b4a3146d9dc983d596f3"
 dependencies = [
  "chrono",
  "form_urlencoded",
- "http 1.3.1",
+ "http",
  "json-patch",
  "k8s-openapi",
  "schemars 0.8.22",
@@ -5896,10 +5734,10 @@ dependencies = [
  "chrono",
  "either",
  "futures",
- "http 1.3.1",
- "http-body 1.0.1",
+ "http",
+ "http-body",
  "http-body-util",
- "hyper 1.6.0",
+ "hyper",
  "hyper-rustls",
  "hyper-util",
  "jsonwebtoken",
@@ -6038,7 +5876,7 @@ checksum = "d7a6d09a73194e6b66df7c8f1b680f156d916a1a942abf2de06823dd02b7855d"
 dependencies = [
  "async-trait",
  "bytes",
- "http 1.3.1",
+ "http",
  "opentelemetry",
  "reqwest",
 ]
@@ -6049,7 +5887,7 @@ version = "0.31.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f69cd6acbb9af919df949cd1ec9e5e7fdc2ef15d234b6b795aaa525cc02f71f"
 dependencies = [
- "http 1.3.1",
+ "http",
  "opentelemetry",
  "opentelemetry-http",
  "opentelemetry-proto",
@@ -6958,10 +6796,10 @@ dependencies = [
  "futures-channel",
  "futures-core",
  "futures-util",
- "http 1.3.1",
- "http-body 1.0.1",
+ "http",
+ "http-body",
  "http-body-util",
- "hyper 1.6.0",
+ "hyper",
  "hyper-rustls",
  "hyper-util",
  "ipnet",
@@ -7486,17 +7324,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde_qs"
-version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3faaf9e727533a19351a43cc5a8de957372163c7d35cc48c90b75cdda13c352"
-dependencies = [
- "percent-encoding",
- "serde",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "serde_spanned"
 version = "0.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7718,7 +7545,7 @@ dependencies = [
  "anyhow",
  "cargo-builder",
  "clap",
- "dirs 6.0.0",
+ "dirs",
  "enum-display",
  "fluvio",
  "fluvio-cli-common",
@@ -7729,6 +7556,7 @@ dependencies = [
  "fluvio-smartengine",
  "include_dir",
  "lib-cargo-crate",
+ "tempfile",
  "toml 0.8.22",
  "tracing",
 ]
@@ -8243,10 +8071,10 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "bytes",
- "http 1.3.1",
- "http-body 1.0.1",
+ "http",
+ "http-body",
  "http-body-util",
- "hyper 1.6.0",
+ "hyper",
  "hyper-timeout",
  "hyper-util",
  "percent-encoding",
@@ -8300,8 +8128,8 @@ dependencies = [
  "bitflags 2.9.1",
  "bytes",
  "futures-util",
- "http 1.3.1",
- "http-body 1.0.1",
+ "http",
+ "http-body",
  "iri-string",
  "mime",
  "pin-project-lite",
@@ -8521,7 +8349,7 @@ checksum = "d11a831e3c0b56e438a28308e7c810799e3c118417f342d30ecec080105395cd"
 dependencies = [
  "base64 0.22.1",
  "brotli-decompressor",
- "http 1.3.1",
+ "http",
  "log",
  "once_cell",
  "rustls 0.22.4",

@@ -92,7 +92,7 @@ impl LocalMetadataItem {
 }
 
 cfg_if::cfg_if! {
-    if #[cfg(any(feature = "k8", feature = "kube"))] {
+    if #[cfg(feature = "kube")] {
         use std::{
             path::{Path, PathBuf},
             sync::{Arc, atomic::AtomicU64},

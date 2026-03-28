@@ -1,14 +1,12 @@
-#[cfg(feature = "k8")]
-pub mod k8;
 #[cfg(feature = "kube")]
 pub mod kube_rs;
-#[cfg(any(feature = "k8", feature = "kube"))]
+#[cfg(feature = "kube")]
 pub mod memory_client;
 #[cfg(feature = "local")]
 pub mod local;
 
 cfg_if::cfg_if! {
-    if #[cfg(any(feature = "k8", feature = "kube"))] {
+    if #[cfg(feature = "kube")] {
         use anyhow::Result;
         use async_trait::async_trait;
 
@@ -22,7 +20,7 @@ cfg_if::cfg_if! {
 pub type SharedClient<C> = std::sync::Arc<C>;
 
 #[async_trait]
-#[cfg(any(feature = "k8", feature = "kube"))]
+#[cfg(feature = "kube")]
 pub trait MetadataClient<M: MetadataItem>: Send + Sync {
     async fn retrieve_items<S>(&self, namespace: &NameSpace) -> Result<MetadataStoreList<S, M>>
     where

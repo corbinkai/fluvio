@@ -14,9 +14,12 @@ git = ["dep:gix"]
 
 [dependencies]
 anyhow = { workspace = true }
+globset = "0.4"
 include_dir = "0.7"
 liquid = "0.26"
 liquid-core = "0.26"
+liquid-derive = "0.26"
+regex = "1"
 tracing = { workspace = true }
 
 [dependencies.gix]

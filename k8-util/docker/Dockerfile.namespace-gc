@@ -1,0 +1,43 @@
+# Dockerfile for fluvio-namespace-gc
+# Same two-mode pattern as the main Dockerfile.
+
+ARG BUILD_MODE=prebuilt
+
+# --- Stage: zigbuild ---
+FROM --platform=$BUILDPLATFORM rust:1-trixie AS zigbuild
+ARG TARGETARCH
+RUN set -eux; \
+    curl -fsSL https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz | tar -xJ -C /opt; \
+    ln -s /opt/zig-x86_64-linux-0.15.2/zig /usr/local/bin/zig; \
+    cargo install cargo-zigbuild --locked; \
+    case "${TARGETARCH}" in \
+      arm64|aarch64) rustup target add aarch64-unknown-linux-musl ;; \
+      amd64|x86_64)  rustup target add x86_64-unknown-linux-musl ;; \
+    esac
+WORKDIR /app
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY crates/ crates/
+COPY connector/ connector/
+COPY smartmodule/ smartmodule/
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      arm64|aarch64) TARGET=aarch64-unknown-linux-musl ;; \
+      amd64|x86_64)  TARGET=x86_64-unknown-linux-musl ;; \
+    esac; \
+    cargo zigbuild --target "${TARGET}" --release --bin fluvio-namespace-gc -p fluvio-namespace-gc; \
+    cp "/app/target/${TARGET}/release/fluvio-namespace-gc" /app/fluvio-namespace-gc
+
+# --- Stage: select binary ---
+FROM scratch AS binary-prebuilt
+COPY fluvio-namespace-gc /fluvio-namespace-gc
+
+FROM scratch AS binary-zigbuild
+COPY --from=zigbuild /app/fluvio-namespace-gc /fluvio-namespace-gc
+
+FROM binary-${BUILD_MODE} AS binary
+
+# --- Runtime ---
+FROM alpine:3.21
+COPY --from=binary /fluvio-namespace-gc /fluvio-namespace-gc
+RUN chmod +x /fluvio-namespace-gc
+ENTRYPOINT ["/fluvio-namespace-gc"]

@@ -22,7 +22,7 @@ enum-display = { workspace = true }
 toml = { workspace = true }
 include_dir = { workspace = true }
 lib-cargo-crate = { workspace = true }
-fluvio-generate = { path = "../fluvio-generate" }
+fluvio-generate = { path = "../fluvio-generate", features = ["git"] }
 
 
 fluvio = { workspace = true }
@@ -32,3 +32,4 @@ fluvio-extension-common = { workspace = true, features = ["target"] }
 fluvio-controlplane-metadata = { workspace = true, features = ["smartmodule"] }
 fluvio-cli-common = { workspace = true, features = ["file-records", "version-cmd", "serde", "smartmodule-test"] }
 cargo-builder = { path = "../cargo-builder"}
+tempfile = { workspace = true }
