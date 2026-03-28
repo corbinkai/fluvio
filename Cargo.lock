@@ -2226,6 +2226,7 @@ dependencies = [
  "fluvio-smartengine",
  "fluvio-smartmodule",
  "fluvio-spu-schema",
+ "fluvio-storage",
  "fluvio-types",
  "futures",
  "futures-util",
@@ -2916,6 +2917,7 @@ dependencies = [
  "async-lock",
  "async-trait",
  "cfg-if",
+ "fluvio-controlplane-metadata",
  "fluvio-future",
  "fluvio-stream-model",
  "fluvio-types",
@@ -2930,6 +2932,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

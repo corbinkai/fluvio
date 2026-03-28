@@ -20,7 +20,7 @@ use crate::mirroring::ObjectMirroringRequest;
 use crate::AdminPublicApiKey;
 use crate::objects::{
     ObjectApiCreateRequest, ObjectApiDeleteRequest, ObjectApiListRequest, ObjectApiUpdateRequest,
-    ObjectApiWatchRequest,
+    ObjectApiWatchRequest, ObjectApiClearRequest,
 };
 
 /// Non generic AdminRequest, This is typically used Decoding
@@ -33,6 +33,7 @@ pub enum AdminPublicDecodedRequest {
     WatchRequest(RequestMessage<ObjectApiWatchRequest>),
     MirroringRequest(RequestMessage<ObjectMirroringRequest>),
     UpdateRequest(RequestMessage<ObjectApiUpdateRequest>),
+    ClearRequest(RequestMessage<ObjectApiClearRequest>),
 }
 
 impl Default for AdminPublicDecodedRequest {
@@ -92,6 +93,10 @@ impl ApiMessage for AdminPublicDecodedRequest {
             AdminPublicApiKey::Update => Ok(Self::UpdateRequest(RequestMessage::new(
                 header,
                 ObjectApiUpdateRequest::decode_from(src, version)?,
+            ))),
+            AdminPublicApiKey::Clear => Ok(Self::ClearRequest(RequestMessage::new(
+                header,
+                ObjectApiClearRequest::decode_from(src, version)?,
             ))),
         }
     }

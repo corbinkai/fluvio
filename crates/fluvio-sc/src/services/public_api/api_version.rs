@@ -9,8 +9,8 @@ use fluvio_protocol::link::versions::{
     ApiVersionKey, ApiVersionsRequest, ApiVersionsResponse, PlatformVersion,
 };
 use fluvio_sc_schema::objects::{
-    ObjectApiCreateRequest, ObjectApiDeleteRequest, ObjectApiListRequest, ObjectApiUpdateRequest,
-    ObjectApiWatchRequest,
+    ObjectApiClearRequest, ObjectApiCreateRequest, ObjectApiDeleteRequest, ObjectApiListRequest,
+    ObjectApiUpdateRequest, ObjectApiWatchRequest,
 };
 use fluvio_sc_schema::AdminPublicApiKey;
 
@@ -64,6 +64,12 @@ pub async fn handle_api_versions_request(
         AdminPublicApiKey::Update,
         ObjectApiUpdateRequest::MIN_API_VERSION,
         ObjectApiUpdateRequest::MAX_API_VERSION,
+    ));
+
+    response.api_keys.push(make_version_key(
+        AdminPublicApiKey::Clear,
+        ObjectApiClearRequest::MIN_API_VERSION,
+        ObjectApiClearRequest::MAX_API_VERSION,
     ));
 
     trace!("flv api versions response: {:#?}", response);

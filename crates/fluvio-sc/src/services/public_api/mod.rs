@@ -5,6 +5,7 @@ mod spu;
 mod topic;
 mod partition;
 mod api_version;
+mod clear;
 mod create;
 mod delete;
 mod update;

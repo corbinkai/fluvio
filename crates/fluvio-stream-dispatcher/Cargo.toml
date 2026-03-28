@@ -41,3 +41,5 @@ fluvio-future = { workspace = true, features = ["task", "timer"] }
 [dev-dependencies]
 fluvio-future = { workspace = true, features = ["fixture"] }
 fluvio-stream-model = { workspace = true, features = ["fixture"]  }
+fluvio-controlplane-metadata = { workspace = true, features = ["k8"] }
+uuid = { version = "1", features = ["v4"] }

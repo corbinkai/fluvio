@@ -85,6 +85,7 @@ fluvio-smartengine = { workspace = true,  features = ["transformation"]}
 fluvio-protocol = { workspace = true, features=["record","api"] }
 fluvio-smartmodule = { workspace = true  }
 fluvio-controlplane-metadata = { workspace = true, features = ["smartmodule"] }
+fluvio-storage = { workspace = true }
 
 # Optional Fluvio dependencies
 fluvio-types = { workspace = true,  optional = true }

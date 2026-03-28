@@ -26,4 +26,5 @@ pub enum AdminPublicApiKey {
     Watch = 1004,
     Mirroring = 1005,
     Update = 1006,
+    Clear = 1007,
 }

@@ -8,6 +8,7 @@ mod smartmodule_invocation;
 mod consumer;
 mod remote;
 mod home;
+mod repair_index;
 
 pub use metadata::client_metadata;
 pub use cmd::FluvioCmd;
@@ -56,6 +57,7 @@ mod cmd {
     use super::topic::TopicCmd;
     use super::partition::PartitionCmd;
     use super::tableformat::TableFormatCmd;
+    use super::repair_index::RepairIndexOpt;
 
     #[async_trait]
     pub trait ClientCmd: Sized {
@@ -146,6 +148,10 @@ mod cmd {
         /// Commands to interact with the home cluster
         #[command(subcommand, name = "home")]
         Home(Box<HomeCmd>),
+
+        /// Validate and repair index files in an SPU data directory
+        #[command(name = "repair-index")]
+        RepairIndex(RepairIndexOpt),
     }
 
     impl FluvioCmd {
@@ -182,6 +188,9 @@ mod cmd {
                 }
                 Self::Home(home) => {
                     home.process(out, target).await?;
+                }
+                Self::RepairIndex(repair) => {
+                    repair.process().await?;
                 }
             }
 

@@ -6,7 +6,7 @@ use futures_util::{Stream, StreamExt};
 use tracing::{debug, trace, instrument};
 use anyhow::{Result, anyhow};
 
-use fluvio_sc_schema::objects::ObjectApiUpdateRequest;
+use fluvio_sc_schema::objects::{ObjectApiUpdateRequest, ObjectApiClearRequest, ClearRequest};
 use fluvio_sc_schema::objects::UpdateRequest;
 use fluvio_sc_schema::UpdatableAdminSpec;
 use fluvio_protocol::{Decoder, Encoder};
@@ -245,6 +245,38 @@ impl FluvioAdmin {
         debug!("sending force delete request: {:#?}", delete_request);
 
         self.send_receive_admin::<ObjectApiDeleteRequest, _>(delete_request)
+            .await?
+            .as_result()?;
+        Ok(())
+    }
+
+    /// Clear all data from an object without deleting it.
+    /// Preserves metadata and consumer connections.
+    #[instrument(skip(self, key))]
+    pub async fn clear<S>(&self, key: impl Into<S::DeleteKey>) -> Result<()>
+    where
+        S: DeletableAdminSpec + Sync + Send,
+    {
+        let clear_request: ClearRequest<S> = ClearRequest::new(key.into());
+        debug!("sending clear request: {:#?}", clear_request);
+
+        self.send_receive_admin::<ObjectApiClearRequest, _>(clear_request)
+            .await?
+            .as_result()?;
+        Ok(())
+    }
+
+    /// Clear all data from an object, resetting high watermark.
+    /// Consumers will re-read from offset 0.
+    #[instrument(skip(self, key))]
+    pub async fn clear_with_reset_hw<S>(&self, key: impl Into<S::DeleteKey>) -> Result<()>
+    where
+        S: DeletableAdminSpec + Sync + Send,
+    {
+        let clear_request: ClearRequest<S> = ClearRequest::with_reset_hw(key.into(), true);
+        debug!("sending clear request with hw reset: {:#?}", clear_request);
+
+        self.send_receive_admin::<ObjectApiClearRequest, _>(clear_request)
             .await?
             .as_result()?;
         Ok(())

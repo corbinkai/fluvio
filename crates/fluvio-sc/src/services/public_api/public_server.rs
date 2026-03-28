@@ -108,6 +108,12 @@ where
                 shared_sink,
                 "delete  handler"
             ),
+            AdminPublicDecodedRequest::ClearRequest(request) => call_service!(
+                request,
+                super::clear::handle_clear_request(request, &service_context),
+                shared_sink,
+                "clear handler"
+            ),
 
             AdminPublicDecodedRequest::ListRequest(request) => call_service!(
                 request,

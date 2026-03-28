@@ -1,7 +1,8 @@
 //!
 //! # Clear Topic
 //!
-//! CLI command to clear all data from a topic by deleting and recreating it.
+//! CLI command to clear all data from a topic without deleting it.
+//! Preserves topic metadata and consumer connections.
 //!
 
 use tracing::debug;
@@ -17,6 +18,10 @@ pub struct ClearTopicOpt {
     #[arg(value_name = "name")]
     topic: String,
 
+    /// Reset high watermark (consumers will re-read from offset 0)
+    #[arg(long)]
+    reset_hw: bool,
+
     /// Skip confirmation prompt
     #[arg(short = 'y', long)]
     confirm: bool,
@@ -26,21 +31,20 @@ impl ClearTopicOpt {
     pub async fn process(self, fluvio: &Fluvio) -> Result<()> {
         let admin = fluvio.admin().await;
 
-        // Look up existing topic to get its spec
-        let topics = admin.list::<TopicSpec, _>(vec![self.topic.clone()]).await?;
-        let topic_meta = topics
-            .into_iter()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("topic '{}' not found", self.topic))?;
-
-        debug!(topic = %self.topic, "found topic, spec: {:#?}", topic_meta.spec);
-
         if !self.confirm {
-            println!(
-                "This will delete ALL data for topic '{}' by deleting and recreating it.",
-                self.topic
-            );
-            println!("Consumer connections will be dropped. Are you sure? [y/N]");
+            if self.reset_hw {
+                println!(
+                    "This will clear ALL data for topic '{}' and reset the high watermark.",
+                    self.topic
+                );
+                println!("Consumers will restart from offset 0. Are you sure? [y/N]");
+            } else {
+                println!(
+                    "This will clear ALL data for topic '{}'.",
+                    self.topic
+                );
+                println!("Are you sure? [y/N]");
+            }
 
             let mut ans = String::new();
             std::io::stdin().read_line(&mut ans)?;
@@ -51,15 +55,13 @@ impl ClearTopicOpt {
             }
         }
 
-        let spec = topic_meta.spec;
+        debug!(topic = %self.topic, reset_hw = %self.reset_hw, "clearing topic");
 
-        // Delete the topic
-        debug!(topic = %self.topic, "deleting topic");
-        admin.delete::<TopicSpec>(&self.topic).await?;
-
-        // Recreate with same spec
-        debug!(topic = %self.topic, "recreating topic");
-        admin.create(self.topic.clone(), false, spec).await?;
+        if self.reset_hw {
+            admin.clear_with_reset_hw::<TopicSpec>(&self.topic).await?;
+        } else {
+            admin.clear::<TopicSpec>(&self.topic).await?;
+        }
 
         println!("topic \"{}\" cleared", self.topic);
         Ok(())
