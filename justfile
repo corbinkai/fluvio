@@ -329,6 +329,43 @@ create-spugroup replicas="2":
     echo "SpuGroup 'main' created with {{ replicas }} replicas"
 
 # ============================================================
+# DEVSPACE + SKUPPER (shared infra integration)
+# ============================================================
+
+# Set up Skupper cross-cluster service mesh to shared infra
+skupper-setup:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    KUBECONFIG={{ kubeconfig }} kubectl create namespace {{ namespace }} --context {{ kube_ctx }} --dry-run=client -o yaml | \
+      KUBECONFIG={{ kubeconfig }} kubectl apply --context {{ kube_ctx }} -f -
+    # Copy fresh token from infra repo if available
+    if [ -f ../infrastructure/k3d-infra/skupper/token.yaml ]; then
+      cp ../infrastructure/k3d-infra/skupper/token.yaml skupper/token.yaml
+    fi
+    # Install Skupper controller
+    helm upgrade --install skupper oci://quay.io/skupper/helm/skupper \
+      --version 2.1.3 \
+      --namespace {{ namespace }} \
+      --kubeconfig {{ kubeconfig }} \
+      --kube-context {{ kube_ctx }} \
+      --wait
+    # Apply site, token, and listeners
+    KUBECONFIG={{ kubeconfig }} kubectl apply -f skupper/site.yaml -n {{ namespace }} --context {{ kube_ctx }}
+    if [ -f skupper/token.yaml ]; then
+      KUBECONFIG={{ kubeconfig }} kubectl apply -f skupper/token.yaml -n {{ namespace }} --context {{ kube_ctx }}
+    fi
+    KUBECONFIG={{ kubeconfig }} kubectl apply -f skupper/listeners.yaml -n {{ namespace }} --context {{ kube_ctx }}
+    echo "Skupper setup complete — shared services available as:"
+    echo "  uptrace:14317      (OTLP gRPC)"
+    echo "  uptrace-http:14319 (Uptrace UI)"
+    echo "  mailcrab:1025      (SMTP)"
+    echo "  mailcrab-web:1080  (Mail inbox)"
+
+# Start development with DevSpace (builds, deploys, sets up Skupper)
+dev: create-cluster
+    devspace dev --kubeconfig {{ kubeconfig }} --kube-context {{ kube_ctx }} --namespace {{ namespace }}
+
+# ============================================================
 # LOCAL DEVELOPMENT
 # ============================================================
 
