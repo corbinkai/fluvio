@@ -2,9 +2,13 @@ apiVersion: v1
 kind: Service
 metadata:
   name: fluvio-sc-internal
+  labels:
+    {{- include "fluvio.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sc
 spec:
+  type: ClusterIP
   selector:
-    app: fluvio-sc
+    {{- include "fluvio.sc.selectorLabels" . | nindent 4 }}
   ports:
   - protocol: TCP
     port: 9004

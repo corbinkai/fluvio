@@ -1,5 +1,8 @@
 apiVersion: v2
 name: fluvio-sys
-description: A Helm chart for Fluvio
+description: Fluvio Custom Resource Definitions
 type: application
-version: 0.9.20
+version: 1.0.0
+appVersion: "0.18.2-dev-1"
+maintainers:
+  - name: Koshee

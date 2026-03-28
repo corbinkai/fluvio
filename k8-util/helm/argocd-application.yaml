@@ -1,0 +1,89 @@
+# Reference ArgoCD Applications for deploying Fluvio via GitOps.
+# Copy these into infrastructure/base/operators/fluvio/ or apply directly.
+#
+# CRDs (sync wave 0) must be installed before the app chart (sync wave 1).
+
+---
+# CRDs — cluster-scoped, never pruned automatically
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: fluvio-sys
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Koshee-AI/fluvio.git
+    targetRevision: master
+    path: k8-util/helm/fluvio-sys
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: fluvio-system
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - Replace=true
+---
+# App chart — SC, RBAC, SpuGroup, namespace-gc
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: fluvio-app
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Koshee-AI/fluvio.git
+    targetRevision: master
+    path: k8-util/helm/fluvio-app
+    helm:
+      valueFiles:
+        - values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: fluvio-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  ignoreDifferences:
+    # StatefulSets are created by the SC operator, not Helm
+    - group: apps
+      kind: StatefulSet
+      jsonPointers:
+        - /spec/replicas
+        - /spec/template
+    # Services for individual SPUs are controller-managed
+    - group: ""
+      kind: Service
+      namespace: fluvio-system
+      jqPathExpressions:
+        - '.metadata.labels'
+    # SPU CRDs are controller-managed
+    - group: fluvio.infinyon.com
+      kind: Spu
+      jqPathExpressions:
+        - '.spec'
+        - '.status'

@@ -1,0 +1,42 @@
+{{- if .Values.namespaceGc.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fluvio-namespace-gc
+  labels:
+    {{- include "fluvio.labels" . | nindent 4 }}
+    app.kubernetes.io/component: namespace-gc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "fluvio.namespaceGc.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "fluvio.namespaceGc.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "fluvio.serviceAccountName" . }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: namespace-gc
+          image: "{{ .Values.namespaceGc.image.registry }}/{{ .Values.namespaceGc.image.repository }}:{{ .Values.namespaceGc.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          {{- with .Values.namespaceGc.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

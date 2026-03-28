@@ -1,21 +1,21 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ .Values.serviceAccount.name }}
+  name: {{ include "fluvio.serviceAccountName" . }}
+  labels:
+    {{- include "fluvio.labels" . | nindent 4 }}
 rules:
-- apiGroups: [""] # "" indicates the core API group
+- apiGroups: [""]
   resources:
     - pods
     - services
-    - statefulsets.apps
     - persistentvolumeclaims
     - persistentvolumes
-    - replicasets
-    - deployments
     - configmaps
+    - namespaces
   verbs: ["*"]
-- apiGroups:  ["apps"]
-  resources:  ["*"]
+- apiGroups: ["apps"]
+  resources: ["*"]
   verbs: ["*"]
 - apiGroups: ["fluvio.infinyon.com"]
   resources: ["*"]

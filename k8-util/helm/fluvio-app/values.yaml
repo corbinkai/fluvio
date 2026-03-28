@@ -1,21 +1,37 @@
-# Default values for fluvio.
+# Default values for Fluvio.
 
+# Container image for SC and SPU pods
+image:
+  registry: ghcr.io/koshee-ai
+  repository: fluvio
+  tag: ""              # Defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+# Image pull secrets (if using private registry)
+imagePullSecrets: []
+
+# SC service configuration
+service:
+  type: ClusterIP      # ClusterIP (default), NodePort, or LoadBalancer
+
+# Load balancer annotations for SPU services (applied via spu-k8 ConfigMap)
 loadBalancer:
   serviceAnnotations: {}
-service:
-  type: NodePort
+
+# SC logging level
 scLog: info
+
+# TLS configuration
 tls: false
-imagePullSecrets: []
-image:
-  registry: ghcr.io/fluvio-community
-  tag: ""
-  pullPolicy: IfNotPresent
 cert:
   caCert: fluvio-ca
   tls: fluvio-tls
   domain: fluvio.local
+
+# Optional RBAC authorization policy ConfigMap
 authorizationConfigMap: ""
+
+# SC pod configuration
 scPod:
   resources:
     requests:
@@ -24,12 +40,13 @@ scPod:
       memory: 512Mi
   nodeSelector: {}
   publicPort: 9003
-  nodePort: 30003
   extraContainers: []
   extraEnv: []
   extraVolumes: []
   extraVolumeMounts: []
   priorityClassName: null
+
+# SPU pod configuration (serialized to spu-k8 ConfigMap, read by SC controllers)
 spuPod:
   resources:
     requests:
@@ -38,14 +55,65 @@ spuPod:
       memory: 1Gi
   nodeSelector: {}
   storageClass: null
-  baseNodePort: 30004
+  baseNodePort: 30004    # Only used when service.type=NodePort
   extraContainers: []
-  extraEnv: []
+  extraEnv: []           # OTel env vars for SPUs go here (flows through ConfigMap → controller → StatefulSet)
   extraVolumes: []
   extraVolumeMounts: []
   priorityClassName: null
+
+# SpuGroup (created by chart, reconciled by SC controllers into StatefulSet + Services)
+spuGroup:
+  enabled: true
+  name: main
+  replicas: 1
+  minId: 0
+  template: {}          # Optional: override SPU pod template spec
+
+# Namespace GC controller (deletes topics when source namespace is deleted)
+namespaceGc:
+  enabled: false
+  image:
+    registry: ghcr.io/koshee-ai
+    repository: fluvio-namespace-gc
+    tag: ""
+  resources:
+    requests:
+      memory: 64Mi
+    limits:
+      memory: 128Mi
+
+# RBAC
 rbac:
   create: true
+
+# Service account
 serviceAccount:
   name: fluvio
-podSecurityContext: {}
+
+# Pod security context (applied to SC and namespace-gc pods)
+podSecurityContext:
+  seccompProfile:
+    type: RuntimeDefault
+
+# Container security context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+# OpenTelemetry observability
+otel:
+  enabled: false
+  endpoint: "http://otel-collector.observability.svc.cluster.local:4317"
+  scServiceName: "fluvio-sc"
+  spuServiceName: "fluvio-spu"
+
+# Uptrace integration (trace/metrics backend)
+uptrace:
+  endpoint: ""
+  dsnHost: ""
+  projectId: ""
+  tokenSecret: ""
+  tokenKey: "token"

@@ -2,40 +2,71 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: fluvio-sc
+  labels:
+    {{- include "fluvio.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sc
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: fluvio-sc
+      {{- include "fluvio.sc.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        app: fluvio-sc
+        {{- include "fluvio.sc.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{ .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "fluvio.serviceAccountName" . }}
+      {{- with .Values.podSecurityContext }}
       securityContext:
-        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scPod.nodeSelector }}
       nodeSelector:
-        {{- toYaml .Values.scPod.nodeSelector | nindent 8 }}
-      priorityClassName: {{ .Values.scPod.priorityClassName }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scPod.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
       containers:
         - name: fluvio-sc
-          image: {{ .Values.image.registry }}/fluvio:{{ .Values.image.tag | default .Chart.AppVersion }}
+          image: {{ include "fluvio.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           resources:
             {{- toYaml .Values.scPod.resources | nindent 12 }}
           ports:
-            - containerPort: 9003
+            - name: public
+              containerPort: 9003
+            - name: internal
+              containerPort: 9004
           env:
             - name: RUST_LOG
               value: {{ .Values.scLog }}
-            {{ if .Values.scPod.extraEnv }}
-            {{- toYaml .Values.scPod.extraEnv | nindent 12 }}
-            {{ end }}
+            {{- if .Values.otel.enabled }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.otel.endpoint | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ .Values.otel.scServiceName | default "fluvio-sc" | quote }}
+            {{- end }}
+            {{- if and .Values.uptrace.endpoint .Values.uptrace.tokenSecret }}
+            - name: UPTRACE_ENDPOINT
+              value: {{ .Values.uptrace.endpoint | quote }}
+            - name: UPTRACE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.uptrace.tokenSecret }}
+                  key: {{ .Values.uptrace.tokenKey }}
+            {{- end }}
+            {{- with .Values.scPod.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           command: ["/fluvio-run", "sc"]
           args:
             - --k8
-        {{ if .Values.tls }}
+        {{- if .Values.tls }}
             - --tls
             - --enable-client-cert
             - --ca-cert
@@ -48,41 +79,41 @@ spec:
             - {{ .Values.cert.tls }}
             - --bind-non-tls-public
             - 0.0.0.0:9005
-            {{ if .Values.authorizationConfigMap }}
+            {{- if .Values.authorizationConfigMap }}
             - --authorization-policy
             - /etc/fluvio/authorization/policy.json
             - --authorization-scopes
             - /etc/fluvio/authorization/scopes.json
-            {{ end }}
+            {{- end }}
           volumeMounts:
             - name: cacert
               mountPath: /var/certs/ca
               readOnly: true
             - name: tls
               mountPath: /var/certs/tls
-            {{ if .Values.authorizationConfigMap }}
+            {{- if .Values.authorizationConfigMap }}
             - name: authorization-config
               mountPath: /etc/fluvio/authorization
-            {{ end }}
-            {{ if .Values.scPod.extraVolumeMounts }}
-            {{- toYaml .Values.scPod.extraVolumeMounts | nindent 12 }}
-            {{ end }}
-        {{ else if .Values.scPod.extraVolumeMounts }}
+            {{- end }}
+            {{- with .Values.scPod.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+        {{- else if .Values.scPod.extraVolumeMounts }}
           volumeMounts:
             {{- toYaml .Values.scPod.extraVolumeMounts | nindent 12 }}
-        {{ end }}
-        {{ if .Values.scPod.extraContainers }}
-        {{- toYaml .Values.scPod.extraContainers | nindent 8 }}
-        {{ end }}
+        {{- end }}
+        {{- with .Values.scPod.extraContainers }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       volumes:
-      {{ if .Values.tls }}
+      {{- if .Values.tls }}
         - name: cacert
           secret:
             secretName: {{ .Values.cert.caCert }}
         - name: tls
           secret:
             secretName: {{ .Values.cert.tls }}
-        {{ if .Values.authorizationConfigMap }}
+        {{- if .Values.authorizationConfigMap }}
         - name: authorization-config
           configMap:
             name: {{ .Values.authorizationConfigMap }}
@@ -91,8 +122,12 @@ spec:
               path: policy.json
             - key: SCOPES
               path: scopes.json
-        {{ end }}
-      {{ end }}
-        {{ if .Values.scPod.extraVolumes }}
-        {{- toYaml .Values.scPod.extraVolumes | nindent 8 }}
-        {{ end }}
+        {{- end }}
+      {{- end }}
+        {{- with .Values.scPod.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

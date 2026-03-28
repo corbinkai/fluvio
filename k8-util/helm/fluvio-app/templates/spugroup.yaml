@@ -1,0 +1,16 @@
+{{- if .Values.spuGroup.enabled }}
+apiVersion: fluvio.infinyon.com/v1
+kind: SpuGroup
+metadata:
+  name: {{ .Values.spuGroup.name | default "main" }}
+  labels:
+    {{- include "fluvio.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.spuGroup.replicas | default 1 }}
+  minId: {{ .Values.spuGroup.minId | default 0 }}
+  {{- with .Values.spuGroup.template }}
+  template:
+    spec:
+      {{- toYaml . | nindent 6 }}
+  {{- end }}
+{{- end }}

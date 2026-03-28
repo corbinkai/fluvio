@@ -256,81 +256,51 @@ push-namespace-gc: build-musl-gc
 build-musl-gc:
     cargo zigbuild --bin fluvio-namespace-gc -p fluvio-namespace-gc --target x86_64-unknown-linux-musl
 
-# Deploy SC to k3d cluster
+# Deploy Fluvio to k3d cluster via Helm
 deploy: create-cluster push-image
     #!/usr/bin/env bash
     set -euo pipefail
-    IMAGE="{{ registry }}/fluvio:dev"
 
-    echo "Deploying SC with image ${IMAGE}..."
-    KUBECONFIG={{ kubeconfig }} kubectl delete configmap/spu-k8 \
-      deployment/fluvio-sc \
-      service/fluvio-sc-public \
-      service/fluvio-sc-internal \
-      service/fluvio-spg-main \
-      service/fluvio-spu-main-0 \
-      service/fluvio-spu-main-1 \
-      serviceaccount/fluvio \
-      role/fluvio \
-      rolebinding/fluvio \
-      statefulset/fluvio-spg-main \
-      spugroup/main \
-      -n {{ namespace }} \
-      --context {{ kube_ctx }} \
-      --ignore-not-found
-    KUBECONFIG={{ kubeconfig }} kubectl delete spu --all -n {{ namespace }} --context {{ kube_ctx }} --ignore-not-found
-    KUBECONFIG={{ kubeconfig }} kubectl delete pvc --all -n {{ namespace }} --context {{ kube_ctx }} --ignore-not-found
+    echo "Installing Fluvio CRDs..."
+    KUBECONFIG={{ kubeconfig }} kubectl apply -f k8-util/helm/fluvio-sys/templates/ --context {{ kube_ctx }}
 
+    echo "Deploying Fluvio via Helm..."
     helm upgrade --install fluvio-app ./k8-util/helm/fluvio-app \
       --namespace {{ namespace }} \
       --kubeconfig {{ kubeconfig }} \
       --kube-context {{ kube_ctx }} \
       --set image.registry={{ registry }} \
+      --set image.repository=fluvio \
       --set image.tag=dev \
       --set image.pullPolicy=Always \
       --set service.type=ClusterIP \
-      --set serviceAccount.name=fluvio
-    KUBECONFIG={{ kubeconfig }} kubectl patch configmap/spu-k8 -n {{ namespace }} --context {{ kube_ctx }} --type=merge -p '{
-      "data": {
-        "lbServiceAnnotations": "{\"fluvio.io/ingress-address\":\"fluvio-spu-main-0\"}"
-      }
-    }'
+      --set spuGroup.enabled=true \
+      --set spuGroup.replicas=1 \
+      --wait --timeout 180s
 
-    KUBECONFIG={{ kubeconfig }} kubectl apply --context {{ kube_ctx }} -n {{ namespace }} -f - <<EOF
-    apiVersion: fluvio.infinyon.com/v1
-    kind: SpuGroup
-    metadata:
-      name: main
-      namespace: {{ namespace }}
-    spec:
-      replicas: 1
-      minId: 0
-    EOF
-
-    echo "Waiting for SC deployment..."
-    KUBECONFIG={{ kubeconfig }} kubectl rollout status deployment/fluvio-sc -n {{ namespace }} --context {{ kube_ctx }} --timeout=180s
+    echo "Waiting for StatefulSet..."
     until KUBECONFIG={{ kubeconfig }} kubectl get statefulset/fluvio-spg-main -n {{ namespace }} --context {{ kube_ctx }} >/dev/null 2>&1; do
       sleep 2
     done
-    SC_INTERNAL_IP=$(KUBECONFIG={{ kubeconfig }} kubectl get svc fluvio-sc-internal -n {{ namespace }} --context {{ kube_ctx }} -o jsonpath='{.spec.clusterIP}')
-    KUBECONFIG={{ kubeconfig }} kubectl patch statefulset/fluvio-spg-main -n {{ namespace }} --context {{ kube_ctx }} --type=merge -p "{
-      \"spec\": {
-        \"template\": {
-          \"spec\": {
-            \"hostAliases\": [
-              {
-                \"ip\": \"${SC_INTERNAL_IP}\",
-                \"hostnames\": [\"fluvio-sc-internal.fluvio-system.svc.cluster.local\"]
-              }
-            ]
-          }
-        }
-      }
-    }"
-    KUBECONFIG={{ kubeconfig }} kubectl delete pod fluvio-spg-main-0 -n {{ namespace }} --context {{ kube_ctx }} --ignore-not-found
-    echo "Waiting for SPU StatefulSet..."
     KUBECONFIG={{ kubeconfig }} kubectl rollout status statefulset/fluvio-spg-main -n {{ namespace }} --context {{ kube_ctx }} --timeout=300s
     KUBECONFIG={{ kubeconfig }} kubectl get deploy,sts,svc,spugroup,spu -n {{ namespace }} --context {{ kube_ctx }}
+
+# Redeploy (clean slate — deletes PVCs and all resources, then reinstalls)
+redeploy: create-cluster push-image
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    echo "Cleaning up existing resources..."
+    helm uninstall fluvio-app \
+      --namespace {{ namespace }} \
+      --kubeconfig {{ kubeconfig }} \
+      --kube-context {{ kube_ctx }} \
+      --ignore-not-found 2>/dev/null || true
+    KUBECONFIG={{ kubeconfig }} kubectl delete spu --all -n {{ namespace }} --context {{ kube_ctx }} --ignore-not-found
+    KUBECONFIG={{ kubeconfig }} kubectl delete pvc --all -n {{ namespace }} --context {{ kube_ctx }} --ignore-not-found
+    sleep 2
+
+    just deploy
 
 # Run SC locally against k3d cluster
 run-sc:

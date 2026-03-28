@@ -2,6 +2,8 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: fluvio-config-map
+  labels:
+    {{- include "fluvio.labels" . | nindent 4 }}
 data:
   fluvioClientConfig: |
     version = "2.0"
