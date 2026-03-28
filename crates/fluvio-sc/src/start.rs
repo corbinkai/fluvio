@@ -25,6 +25,7 @@ pub fn main_loop(opt: ScOpt) {
     println!("CLI Option: {opt:#?}");
 
     inspect_system();
+    crate::otel::init_otel();
     println!("Starting SC, platform: {}", crate::VERSION);
 
     match opt.mode() {

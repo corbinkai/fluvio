@@ -1,41 +1,32 @@
-//! OpenTelemetry + Fastrace initialization for SPU observability.
+//! OpenTelemetry + Fastrace initialization for SC observability.
 //!
-//! Exports metrics via OTLP to the OTel collector → Uptrace.
-//! Tracing spans via fastrace → fastrace-opentelemetry → OTLP.
+//! Exports metrics via OTLP to the OTel collector.
+//! Tracing spans via fastrace -> fastrace-opentelemetry -> OTLP.
 //!
 //! Configure via env vars:
-//! - `OTEL_EXPORTER_OTLP_ENDPOINT` — collector address (default: http://localhost:4317)
-//! - `OTEL_SERVICE_NAME` — service name (default: fluvio-spu)
-
-use std::time::Duration;
+//! - `OTEL_EXPORTER_OTLP_ENDPOINT` - collector address (default: http://localhost:4317)
+//! - `OTEL_SERVICE_NAME` - service name (default: fluvio-sc)
 
 use tracing::{info, warn};
 
 use opentelemetry::KeyValue;
-use opentelemetry::metrics::MeterProvider;
 use opentelemetry_sdk::metrics::SdkMeterProvider;
 use opentelemetry_sdk::Resource;
 
 /// Initialize OpenTelemetry metrics and fastrace tracing.
-/// Call once during SPU startup.
-pub fn init_otel(spu_id: i32) {
+/// Call once during SC startup.
+pub fn init_otel() {
     let service_name = std::env::var("OTEL_SERVICE_NAME")
-        .unwrap_or_else(|_| "fluvio-spu".to_string());
+        .unwrap_or_else(|_| "fluvio-sc".to_string());
 
     let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
         .unwrap_or_else(|_| "http://localhost:4317".to_string());
 
     // Initialize OTLP metrics exporter
-    match init_metrics(&service_name, &endpoint, spu_id) {
+    match init_metrics(&service_name, &endpoint) {
         Ok(provider) => {
-            // Get a meter from the provider before moving it into the global
-            let meter = provider.meter("fluvio-spu");
-            crate::otel_metrics::init_otel_metrics(&meter);
-
-            // Store the provider so it doesn't get dropped
-            // The global meter provider keeps metrics flowing
             let _ = opentelemetry::global::set_meter_provider(provider);
-            info!(%service_name, %endpoint, spu_id, "OTel metrics initialized");
+            info!(%service_name, %endpoint, "OTel metrics initialized");
         }
         Err(err) => {
             warn!(%err, "Failed to initialize OTel metrics — continuing without observability");
@@ -43,7 +34,7 @@ pub fn init_otel(spu_id: i32) {
     }
 
     // Initialize fastrace with OpenTelemetry reporter
-    match init_tracing(&service_name, &endpoint, spu_id) {
+    match init_tracing(&service_name, &endpoint) {
         Ok(()) => {
             info!("Fastrace tracing initialized");
         }
@@ -56,12 +47,10 @@ pub fn init_otel(spu_id: i32) {
 fn init_metrics(
     service_name: &str,
     _endpoint: &str,
-    spu_id: i32,
 ) -> Result<SdkMeterProvider, Box<dyn std::error::Error>> {
     let resource = Resource::builder()
         .with_attributes([
             KeyValue::new("service.name", service_name.to_string()),
-            KeyValue::new("spu.id", spu_id as i64),
         ])
         .build();
 
@@ -80,7 +69,6 @@ fn init_metrics(
 fn init_tracing(
     service_name: &str,
     _endpoint: &str,
-    spu_id: i32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::borrow::Cow;
     use fastrace_opentelemetry::OpenTelemetryReporter;
@@ -93,11 +81,10 @@ fn init_tracing(
     let resource = Resource::builder()
         .with_attributes([
             KeyValue::new("service.name", service_name.to_string()),
-            KeyValue::new("spu.id", spu_id as i64),
         ])
         .build();
 
-    let scope = InstrumentationScope::builder("fluvio-spu")
+    let scope = InstrumentationScope::builder("fluvio-sc")
         .with_version(env!("CARGO_PKG_VERSION"))
         .build();
 
@@ -114,6 +101,5 @@ fn init_tracing(
 
 /// Shutdown OTel providers gracefully.
 pub fn shutdown_otel() {
-    // Flush any remaining spans/metrics
     fastrace::flush();
 }

@@ -60,6 +60,11 @@ fluvio-protocol = { workspace = true }
 fluvio-socket = { workspace = true }
 fluvio-service = { workspace = true  }
 flv-tls-proxy = { workspace = true }
+fastrace = { workspace = true }
+fastrace-opentelemetry = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+opentelemetry-otlp = { workspace = true }
 
 [dev-dependencies]
 rand = { workspace = true }

@@ -5,6 +5,7 @@ use tokio::select;
 use tracing::{debug, trace, error};
 use tracing::instrument;
 use anyhow::{anyhow, Result};
+use opentelemetry::KeyValue;
 
 use fluvio_protocol::api::{RequestKind, RequestHeader};
 use fluvio_spu_schema::Isolation;
@@ -47,6 +48,7 @@ struct PartitionWriteResult {
     error_code: ErrorCode,
 }
 
+#[fastrace::trace]
 #[instrument(
     skip(request,ctx),
     fields(
@@ -139,11 +141,29 @@ async fn handle_produce_topic(
                 api_version = header.api_version(),
                 "smartmodule engine failed: {err:#?}"
             );
+            if let Some(m) = crate::otel_metrics::otel_metrics() {
+                let attrs = [
+                    KeyValue::new("topic", topic.clone()),
+                    KeyValue::new("partition", replica_id.partition.to_string()),
+                ];
+                m.smartmodule_invocations.add(1, &attrs);
+                m.smartmodule_errors.add(1, &attrs);
+            }
             topic_result
                 .partitions
                 .push(PartitionWriteResult::error(replica_id, err));
             continue;
         };
+
+        if !smartmodules.is_empty() {
+            if let Some(m) = crate::otel_metrics::otel_metrics() {
+                let attrs = [
+                    KeyValue::new("topic", topic.clone()),
+                    KeyValue::new("partition", replica_id.partition.to_string()),
+                ];
+                m.smartmodule_invocations.add(1, &attrs);
+            }
+        }
 
         let partition_response = if partition_request.records.total_records() == 0 {
             PartitionWriteResult::filtered(replica_id)
@@ -198,9 +218,20 @@ async fn handle_produce_partition(
     let metrics = ctx.metrics();
     match write_result {
         Ok((base_offset, leo, bytes)) => {
+            let record_count = (leo - base_offset) as u64;
+            let byte_count = bytes as u64;
             metrics
                 .inbound()
-                .increase(is_connector, (leo - base_offset) as u64, bytes as u64);
+                .increase(is_connector, record_count, byte_count);
+
+            if let Some(m) = crate::otel_metrics::otel_metrics() {
+                let attrs = [
+                    KeyValue::new("topic", replica_key.topic.clone()),
+                    KeyValue::new("partition", replica_key.partition.to_string()),
+                ];
+                m.records_received.add(record_count, &attrs);
+                m.bytes_received.add(byte_count, &attrs);
+            }
 
             PartitionWriteResult::ok(replica_key, base_offset, leo)
         }

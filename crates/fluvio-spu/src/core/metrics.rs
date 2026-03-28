@@ -90,8 +90,8 @@ pub struct Activity {
 
 #[derive(Default, Debug)]
 pub(crate) struct IncreaseValue {
-    records: u64,
-    bytes: u64,
+    pub(crate) records: u64,
+    pub(crate) bytes: u64,
 }
 
 impl Activity {

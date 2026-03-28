@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use tracing::{debug, error, instrument, trace, warn};
+use opentelemetry::KeyValue;
 use tokio::select;
 
 use fluvio_compression::CompressionError;
@@ -54,6 +55,7 @@ pub struct StreamFetchHandler {
 
 impl StreamFetchHandler {
     /// handle fluvio continuous fetch request
+    #[fastrace::trace]
     pub(crate) async fn start(
         request: RequestMessage<FileStreamFetchRequest>,
         ctx: DefaultSharedGlobalContext,
@@ -415,8 +417,28 @@ impl StreamFetchHandler {
                     self.max_bytes as usize,
                 )
                 .map_err(|err| {
+                    if let Some(m) = crate::otel_metrics::otel_metrics() {
+                        let attrs = [
+                            KeyValue::new("topic", self.replica.topic.clone()),
+                            KeyValue::new("partition", self.replica.partition.to_string()),
+                        ];
+                        m.smartmodule_invocations.add(1, &attrs);
+                        m.smartmodule_errors.add(1, &attrs);
+                    }
                     StreamFetchError::Fetch(ErrorCode::Other(format!("SmartModule err {err}")))
                 })?;
+
+                if let Some(m) = crate::otel_metrics::otel_metrics() {
+                    let attrs = [
+                        KeyValue::new("topic", self.replica.topic.clone()),
+                        KeyValue::new("partition", self.replica.partition.to_string()),
+                    ];
+                    m.smartmodule_invocations.add(1, &attrs);
+                    if smartmodule_error.is_some() {
+                        m.smartmodule_errors.add(1, &attrs);
+                    }
+                }
+
                 let metrics_update = IncreaseValue::from(&batch);
 
                 sm_ctx.update_global_metrics();
@@ -465,6 +487,15 @@ impl StreamFetchHandler {
                 )
             }
         };
+        if let Some(m) = crate::otel_metrics::otel_metrics() {
+            let attrs = [
+                KeyValue::new("topic", self.replica.topic.clone()),
+                KeyValue::new("partition", self.replica.partition.to_string()),
+            ];
+            m.records_sent.add(metrics_update.records, &attrs);
+            m.bytes_sent.add(metrics_update.bytes, &attrs);
+        }
+
         self.metrics
             .outbound()
             .increase_by_value(self.header.is_connector(), metrics_update);

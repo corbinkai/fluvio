@@ -27,6 +27,7 @@ use fluvio_types::defaults::{
 use futures_util::StreamExt;
 
 use crate::cli::TlsConfig;
+use fastrace::prelude::*;
 use super::spu_service_v2::load_spu_k8_config;
 use super::super::objects::spu_k8_config::ScK8Config;
 
@@ -75,6 +76,7 @@ pub fn start(client: Client, namespace: String, tls: Option<TlsConfig>) {
     });
 }
 
+#[trace]
 async fn reconcile(
     spg: Arc<DynamicObject>,
     ctx: Arc<SpgStatefulSetV2Context>,

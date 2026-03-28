@@ -6,6 +6,7 @@ pub mod core;
 pub mod start;
 
 pub mod stores;
+pub mod otel;
 mod init;
 mod error;
 mod services;

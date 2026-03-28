@@ -21,6 +21,7 @@ use fluvio_future::task::spawn;
 use fluvio_types::defaults::{SPU_PUBLIC_PORT, SPU_PRIVATE_PORT};
 use futures_util::StreamExt;
 
+use fastrace::prelude::*;
 use super::ingress::build_services_map;
 
 const SPG_GROUP: &str = "fluvio.infinyon.com";
@@ -65,6 +66,7 @@ pub fn start(client: Client, namespace: String) {
     });
 }
 
+#[trace]
 async fn reconcile(
     spg: Arc<DynamicObject>,
     ctx: Arc<SpuControllerV2Context>,
