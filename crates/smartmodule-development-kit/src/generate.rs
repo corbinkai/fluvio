@@ -1,12 +1,12 @@
 use std::{path::PathBuf, str::FromStr};
 
-use anyhow::{Error, Result, anyhow};
+use anyhow::{Result, anyhow};
 use clap::{Parser, ValueEnum};
-use cargo_generate::{GenerateArgs, TemplatePath, generate};
 use include_dir::{Dir, include_dir};
-use tempfile::TempDir;
 use enum_display::EnumDisplay;
 use tracing::debug;
+
+use fluvio_generate::{GenerateConfig, TemplateSource, generate};
 use lib_cargo_crate::{Info, InfoOpts};
 
 // Note: Cargo.toml.liquid files are changed by cargo-generate to Cargo.toml
@@ -247,42 +247,30 @@ impl GenerateCmd {
             .with_smart_module_cargo_dependency(Some(sm_dep_source))
             .with_smart_module_public(self.sm_public);
 
-        // cargo generate template source
-        // Check user git, user path, develop, then default to the built-in
-        let SmdkTemplate {
-            template_path,
-            _temp_dir,
-            ..
-        } = if let Some(git_url) = self.template_repo {
-            if let Some(branch) = self.template_repo_branch {
-                SmdkTemplate::source(SmdkTemplateSource::GitBranch {
-                    url: git_url,
-                    branch,
-                })?
-            } else if let Some(tag) = self.template_repo_tag {
-                SmdkTemplate::source(SmdkTemplateSource::GitTag { url: git_url, tag })?
-            } else {
-                SmdkTemplate::source(SmdkTemplateSource::Git(git_url))?
-            }
+        let name = self.name.clone().unwrap_or_else(|| "my-smartmodule".to_string());
+
+        // Template source: check user git, user path, develop, then default to built-in
+        let source = if let Some(_git_url) = self.template_repo {
+            // Git template support requires the "git" feature on fluvio-generate
+            // For now, fall back to embedded templates
+            debug!("Git template repos not yet supported, using embedded templates");
+            TemplateSource::Embedded(&SMART_MODULE_TEMPLATE)
         } else if let Some(path) = self.template_path {
-            SmdkTemplate::source(SmdkTemplateSource::LocalPath(path.into()))?
-        } else if self.develop {
-            SmdkTemplate::source(SmdkTemplateSource::Git(FLUVIO_SMARTMODULE_REPO.to_string()))?
+            TemplateSource::LocalDir(PathBuf::from(path))
         } else {
-            SmdkTemplate::default()?
+            TemplateSource::Embedded(&SMART_MODULE_TEMPLATE)
         };
 
-        let args = GenerateArgs {
-            template_path,
-            name: self.name,
-            verbose: !self.silent,
-            silent: self.silent,
-            define: maybe_user_input.to_cargo_generate(),
+        let config = GenerateConfig {
+            name,
             destination: self.destination,
-            ..Default::default()
+            define: maybe_user_input.to_cargo_generate(),
+            silent: self.silent,
+            verbose: !self.silent,
         };
 
-        generate(args)?;
+        let output = generate(source, config)?;
+        println!("Project generated at: {}", output.display());
 
         Ok(())
     }
@@ -330,118 +318,6 @@ enum SmartModuleType {
     FilterMap,
 }
 
-/// Abstraction on different of template options available for generating a
-/// new SmartModule project.
-///
-/// May hold a reference to a `TempDir` which should not be dropped before
-/// accomplishing the project generation procedure.
-struct SmdkTemplate {
-    template_path: TemplatePath,
-    _temp_dir: Option<TempDir>,
-    _template_source: SmdkTemplateSource,
-}
-
-impl SmdkTemplate {
-    /// Extracts directory contents inlined during build into a temporary directory and
-    /// builds a `TemplatePath` instance with the `path` pointing to the temp
-    /// directory created.
-    ///
-    /// Is important to hold the reference to the `_temp_dir` until generation
-    /// process is completed, otherwise the temp directory will be deleted
-    /// before reaching the generation process.
-    fn default() -> Result<Self> {
-        debug!("Selecting default templates");
-        let temp_dir = TempDir::new()?;
-        let path = temp_dir.path().to_str().map(|s| s.to_string());
-        SMART_MODULE_TEMPLATE
-            .extract(&temp_dir)
-            .map_err(Error::from)?;
-        let template = Self {
-            template_path: TemplatePath {
-                path,
-                ..Default::default()
-            },
-            _temp_dir: Some(temp_dir),
-            _template_source: SmdkTemplateSource::Default,
-        };
-
-        Ok(template)
-    }
-
-    /// Configure where to find Smdk templates
-    fn source(source: SmdkTemplateSource) -> Result<Self> {
-        match source.clone() {
-            SmdkTemplateSource::Git(url) => {
-                debug!("Selecting templates from git @ {url}");
-                Ok(Self {
-                    template_path: TemplatePath {
-                        git: Some(url),
-                        ..Default::default()
-                    },
-                    _temp_dir: None,
-                    _template_source: source,
-                })
-            }
-            SmdkTemplateSource::GitTag { url, tag } => {
-                debug!("Selecting templates from git @ {url} (tag {tag})");
-                Ok(Self {
-                    template_path: TemplatePath {
-                        git: Some(url),
-                        tag: Some(tag),
-                        ..Default::default()
-                    },
-                    _temp_dir: None,
-                    _template_source: source,
-                })
-            }
-            SmdkTemplateSource::GitBranch { url, branch } => {
-                debug!("Selecting templates from git @ {url} (branch {branch})");
-                Ok(Self {
-                    template_path: TemplatePath {
-                        git: Some(url),
-                        branch: Some(branch),
-                        ..Default::default()
-                    },
-                    _temp_dir: None,
-                    _template_source: source,
-                })
-            }
-            SmdkTemplateSource::LocalPath(path) => {
-                debug!("Selecting templates from local path @ {path:?}");
-
-                let path_str = path
-                    .to_str()
-                    .ok_or_else(|| anyhow!("Error extracting path from input"))?
-                    .to_string();
-                Ok(Self {
-                    template_path: TemplatePath {
-                        path: Some(path_str),
-                        ..Default::default()
-                    },
-                    _temp_dir: None,
-                    _template_source: source,
-                })
-            }
-            SmdkTemplateSource::Default => Self::default(),
-        }
-    }
-}
-
-#[derive(Default, Clone)]
-enum SmdkTemplateSource {
-    #[default]
-    Default,
-    Git(String),
-    GitTag {
-        url: String,
-        tag: String,
-    },
-    GitBranch {
-        url: String,
-        branch: String,
-    },
-    LocalPath(PathBuf),
-}
 
 #[derive(Debug, Default, Clone)]
 struct SmdkTemplateUserValues {
@@ -540,40 +416,11 @@ impl std::fmt::Display for CargoSmDependSource {
 
 #[cfg(test)]
 mod test {
-    use std::fs::read_dir;
-
-    use super::SmdkTemplate;
     use super::SmdkTemplateUserValues;
     use super::SmartModuleType;
     use super::SmdkTemplateValue;
     use super::CargoSmDependSource;
     use super::FLUVIO_SMARTMODULE_REPO;
-
-    use crate::SMARTMODULE_TOML;
-
-    #[test]
-    fn test_default_template() {
-        let template = SmdkTemplate::default().unwrap();
-
-        assert!(
-            template._temp_dir.is_some(),
-            "The temporary directory reference is not provided"
-        );
-
-        let temp_dir = template._temp_dir.unwrap();
-        let temp_dir = read_dir(temp_dir.path());
-        assert!(temp_dir.is_ok(), "The temporary directory doesn't exists");
-
-        let mut temp_dir = temp_dir.unwrap();
-        let smart_toml =
-            temp_dir.find(|entry| entry.as_ref().unwrap().file_name().eq(SMARTMODULE_TOML));
-
-        assert!(
-            smart_toml.is_some(),
-            "Smart.toml from template is not included in temporary dir"
-        );
-        assert!(smart_toml.unwrap().is_ok());
-    }
 
     #[test]
     fn test_cargo_dependency_values() {

@@ -1,0 +1,29 @@
+[package]
+name = "fluvio-generate"
+description = "Lightweight template expansion for Fluvio project scaffolding"
+version = "0.1.0"
+publish = false
+repository.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[features]
+default = []
+git = ["dep:gix"]
+
+[dependencies]
+anyhow = { workspace = true }
+include_dir = "0.7"
+liquid = "0.26"
+liquid-core = "0.26"
+tracing = { workspace = true }
+
+[dependencies.gix]
+version = "0.72"
+optional = true
+default-features = false
+features = ["blocking-network-client", "worktree-mutation"]
+
+[dev-dependencies]
+tempfile = { workspace = true }

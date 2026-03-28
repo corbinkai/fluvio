@@ -19,7 +19,6 @@ normal = ["fluvio"]
 [dependencies]
 anyhow = { workspace = true }
 cargo-builder = { path = "../cargo-builder"}
-cargo-generate = { workspace = true }
 clap = { workspace = true, features = ["std", "derive", "help", "usage", "error-context", "env", "wrap_help", "suggestions"], default-features = false }
 comfy-table = { workspace = true  }
 current_platform = { workspace = true }
@@ -27,10 +26,9 @@ enum-display = { workspace = true }
 include_dir = { workspace = true }
 serde = { workspace = true,  features = ["derive"] }
 sysinfo = { workspace = true, default-features = false }
-tempfile = { workspace = true }
 toml = { workspace = true, features = ["parse", "display", "preserve_order"] }
 tracing = { workspace = true }
-openssl = { workspace = true, features = ["vendored"] } # cargo-generate requires openssl
+fluvio-generate = { path = "../fluvio-generate" }
 
 fluvio = { workspace = true }
 fluvio-cli-common = { workspace = true, features = ["serde", "version-cmd"] }
