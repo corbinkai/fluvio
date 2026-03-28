@@ -29,8 +29,8 @@ consumer = [
     "fluvio-spu-schema",
 ]
 k8s = [
-    "k8-client",
-    "k8-config",
+    "dep:kube", "dep:k8s-openapi",
+
     "fluvio-cluster",
 ]
 smartengine = ["fluvio-smartengine/default"]
@@ -69,8 +69,8 @@ tracing = { workspace = true }
 which = { workspace = true }
 
 # Fluvio dependencies
-k8-config = { workspace = true, optional = true }
-k8-client = { workspace = true, optional = true }
+kube = { workspace = true, optional = true }
+k8s-openapi = { workspace = true, optional = true }
 fluvio-cluster = { workspace = true, features = ["cli"], optional = true }
 
 fluvio = { workspace = true }
@@ -88,7 +88,7 @@ fluvio-controlplane-metadata = { workspace = true, features = ["smartmodule"] }
 
 # Optional Fluvio dependencies
 fluvio-types = { workspace = true,  optional = true }
-fluvio-future = { workspace = true, features = ["fs", "io", "subscriber", "rust_tls"], optional = true }
+fluvio-future = { workspace = true, features = ["fs", "io", "subscriber", "rust_tls", "native_tls"], optional = true }
 fluvio-sc-schema = { workspace = true,  features = ["use_serde"], optional = true }
 fluvio-spu-schema = { workspace = true, optional = true }
 

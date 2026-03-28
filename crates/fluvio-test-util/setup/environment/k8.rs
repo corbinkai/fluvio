@@ -69,8 +69,9 @@ impl EnvironmentDriver for K8EnvironmentDriver {
         }
 
         let config = builder.build().unwrap();
-        let installer =
-            ClusterInstaller::from_config(config).expect("Could not create ClusterInstaller");
+        let installer = ClusterInstaller::from_config(config)
+            .await
+            .expect("Could not create ClusterInstaller");
         installer
             .install_fluvio()
             .await

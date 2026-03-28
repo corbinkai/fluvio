@@ -64,9 +64,8 @@ sysinfo = { workspace = true, default-features = false, features = ["system", "n
 # External Fluvio dependencies
 fluvio-helm = { workspace = true }
 flv-util = { workspace = true }
-k8-config = { workspace = true }
-k8-client = { workspace = true }
-k8-types = { workspace = true, features = ["app"] }
+kube = { workspace = true }
+k8s-openapi = { workspace = true }
 fluvio-command = { workspace = true }
 fluvio-future = { workspace = true }
 
@@ -77,7 +76,7 @@ fluvio-controlplane-metadata = { workspace = true,  features = ["k8",] }
 fluvio-sc-schema = { workspace = true  }
 fluvio-types = { workspace = true  }
 fluvio-channel = { workspace = true  }
-fluvio-stream-dispatcher = { workspace = true, features = ["k8", "local"]}
+fluvio-stream-dispatcher = { workspace = true, features = ["kube", "local"]}
 dialoguer.workspace = true
 
 [dev-dependencies]

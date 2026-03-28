@@ -17,8 +17,6 @@ use fluvio_controlplane_metadata::spu::{SpuSpec, CustomSpuSpec};
 use fluvio_future::timer::sleep;
 use fluvio_command::CommandExt;
 use fluvio_types::config_file::SaveLoadConfig;
-use k8_types::{InputK8Obj, InputObjectMeta};
-use k8_client::SharedK8Client;
 
 use crate::render::{ProgressRenderedText, ProgressRenderer};
 use crate::{ClusterChecker, LocalInstallError, StartStatus, UserChartLocation, InstallationType};
@@ -461,8 +459,8 @@ impl LocalInstaller {
         }
 
         let maybe_k8_client = if let InstallationType::LocalK8 = self.config.installation_type {
-            use k8_client::load_and_share;
-            Some(load_and_share()?)
+            
+            Some(kube::Client::try_default().await?)
         } else {
             None
         };
@@ -613,8 +611,8 @@ impl LocalInstaller {
         Ok(())
     }
 
-    #[instrument(skip(self))]
-    async fn launch_spu_group(&self, client: SharedK8Client, pb: &ProgressRenderer) -> Result<()> {
+    #[instrument(skip(self, client))]
+    async fn launch_spu_group(&self, client: kube::Client, pb: &ProgressRenderer) -> Result<()> {
         let count = self.config.spu_replicas;
 
         let runtime = self.config.as_spu_cluster_manager();
@@ -635,24 +633,33 @@ impl LocalInstaller {
         &self,
         spu_index: u16,
         cluster_manager: &LocalSpuProcessClusterManager,
-        client: SharedK8Client,
+        client: kube::Client,
     ) -> Result<()> {
-        use k8_client::meta_client::MetadataClient;
+        use kube::api::{Api, DynamicObject, ApiResource, GroupVersionKind, PostParams};
         use crate::runtime::spu::SpuClusterManager;
 
         let spu_process = cluster_manager.create_spu_relative(spu_index);
 
-        let input = InputK8Obj::new(
-            spu_process.spec().clone(),
-            InputObjectMeta {
-                name: format!("custom-spu-{}", spu_process.id()),
-                namespace: "default".to_owned(),
-                ..Default::default()
-            },
-        );
+        let spu_name = format!("custom-spu-{}", spu_process.id());
+        let spu_spec = serde_json::to_value(spu_process.spec())?;
 
-        debug!(input=?input,"creating spu");
-        client.create_item(input).await?;
+        let spu_obj = serde_json::json!({
+            "apiVersion": "fluvio.infinyon.com/v1",
+            "kind": "Spu",
+            "metadata": {
+                "name": spu_name,
+                "namespace": "default",
+            },
+            "spec": spu_spec,
+        });
+
+        let spu_ar = ApiResource::from_gvk(&GroupVersionKind::gvk(
+            "fluvio.infinyon.com", "v1", "Spu",
+        ));
+        let spus: Api<DynamicObject> = Api::namespaced_with(client, "default", &spu_ar);
+
+        debug!(?spu_obj, "creating spu");
+        spus.create(&PostParams::default(), &serde_json::from_value(spu_obj)?).await?;
         debug!("sleeping 1 sec");
         // sleep 1 seconds for sc to connect
         sleep(Duration::from_millis(1000)).await;

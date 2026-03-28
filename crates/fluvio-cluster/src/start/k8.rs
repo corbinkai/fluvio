@@ -14,7 +14,6 @@ use std::time::SystemTime;
 
 use anyhow::{anyhow, Result};
 use derive_builder::Builder;
-use k8_client::meta_client::NameSpace;
 use tracing::{info, warn, error, debug, instrument};
 use once_cell::sync::Lazy;
 use tempfile::NamedTempFile;
@@ -25,20 +24,19 @@ use fluvio_controlplane_metadata::spg::SpuConfig;
 use fluvio_sc_schema::objects::CommonCreateRequest;
 use fluvio_types::defaults::TLS_CLIENT_SECRET_NAME;
 use fluvio_types::defaults::TLS_SERVER_SECRET_NAME;
-use k8_client::SharedK8Client;
-use k8_client::load_and_share;
-use k8_types::K8Obj;
-use k8_types::app::deployment::DeploymentSpec;
 use fluvio::{Fluvio, FluvioClusterConfig};
 use fluvio::metadata::spg::SpuGroupSpec;
 use fluvio::metadata::spu::SpuSpec;
 use fluvio::config::{TlsPolicy, TlsConfig, TlsPaths, ConfigFile};
 use fluvio_future::timer::sleep;
-use k8_config::K8Config;
-use k8_client::meta_client::MetadataClient;
-use k8_types::core::service::{LoadBalancerType, ServiceSpec, TargetPort};
-use k8_types::core::node::{NodeSpec, NodeAddress};
 use fluvio_command::CommandExt;
+
+use kube::api::{Api, ListParams};
+use kube::config::Kubeconfig;
+use kube::runtime::watcher;
+use kube::runtime::WatchStreamExt;
+use k8s_openapi::api::core::v1::{Node, Service};
+use k8s_openapi::api::apps::v1::Deployment;
 
 use crate::InstallationType;
 use crate::check::{AlreadyInstalled, SysChartCheck};
@@ -540,7 +538,7 @@ impl ClusterConfigBuilder {
 /// # async fn example() -> anyhow::Result<()> {
 /// use semver::Version;
 /// let config = ClusterConfig::builder(Version::parse("0.7.0-alpha.1").unwrap()).build()?;
-/// let installer = ClusterInstaller::from_config(config)?;
+/// let installer = ClusterInstaller::from_config(config).await?;
 /// let _status = installer.install_fluvio().await?;
 /// # Ok(())
 /// # }
@@ -548,13 +546,21 @@ impl ClusterConfigBuilder {
 ///
 /// [Helm Charts]: https://helm.sh/
 /// [Minikube]: https://kubernetes.io/docs/tasks/tools/install-minikube/
-#[derive(Debug)]
 pub struct ClusterInstaller {
     /// Configuration options for this installation
     config: ClusterConfig,
-    /// Shared Kubernetes client for install
-    kube_client: SharedK8Client,
+    /// Kubernetes client for install
+    kube_client: kube::Client,
     pb_factory: ProgressBarFactory,
+}
+
+impl std::fmt::Debug for ClusterInstaller {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClusterInstaller")
+            .field("config", &self.config)
+            .field("kube_client", &"<kube::Client>")
+            .finish()
+    }
 }
 
 impl ClusterInstaller {
@@ -564,13 +570,13 @@ impl ClusterInstaller {
     ///
     /// ```
     /// # use fluvio_cluster::{ClusterConfig, ClusterInstaller};
-    /// # fn example(config: ClusterConfig) -> anyhow::Result<()> {
-    /// let installer = ClusterInstaller::from_config(config)?;
+    /// # async fn example(config: ClusterConfig) -> anyhow::Result<()> {
+    /// let installer = ClusterInstaller::from_config(config).await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn from_config(config: ClusterConfig) -> Result<Self> {
-        let kube_client = load_and_share().map_err(|k8_err| {
+    pub async fn from_config(config: ClusterConfig) -> Result<Self> {
+        let kube_client = kube::Client::try_default().await.map_err(|k8_err| {
             let msg =
                 format!("unable to load kubectl context to access k8 cluster\nError: {k8_err:?}\n");
             error!(target: "kubectl", msg);
@@ -765,13 +771,30 @@ impl ClusterInstaller {
 
                 debug!("Trying to query for Nodes");
 
-                let nodes = kube_client.retrieve_items::<NodeSpec, _>("").await?;
+                let nodes = Api::<Node>::all(kube_client.clone())
+                    .list(&ListParams::default())
+                    .await?;
 
                 debug!("Results from Node query: {:#?}", &nodes);
 
-                let mut node_addr: Vec<NodeAddress> = Vec::new();
-                for n in nodes.items.into_iter().map(|x| x.status.addresses) {
-                    node_addr.extend(n)
+                #[derive(Debug)]
+                struct NodeAddr {
+                    r#type: String,
+                    address: String,
+                }
+
+                let mut node_addr: Vec<NodeAddr> = Vec::new();
+                for node in nodes.items.iter() {
+                    if let Some(status) = &node.status {
+                        if let Some(addresses) = &status.addresses {
+                            for addr in addresses {
+                                node_addr.push(NodeAddr {
+                                    r#type: addr.type_.clone(),
+                                    address: addr.address.clone(),
+                                });
+                            }
+                        }
+                    }
                 }
 
                 debug!("Node Addresses: {:#?}", node_addr);
@@ -886,7 +909,7 @@ impl ClusterInstaller {
     #[instrument(skip(self, service))]
     async fn start_sc_port_forwarding(
         &self,
-        service: &K8Obj<ServiceSpec>,
+        service: &Service,
         pb: &ProgressRenderer,
     ) -> Result<(String, u16, Child)> {
         let pf_host_name = "127.0.0.1";
@@ -894,9 +917,15 @@ impl ClusterInstaller {
         let pf_port = portpicker::pick_unused_port().expect("No local ports available");
         let target_port = ClusterInstaller::target_port_for_service(service)?;
 
+        let namespace = service
+            .metadata
+            .namespace
+            .as_deref()
+            .unwrap_or(&self.config.namespace);
+
         let mut pf_child = std::process::Command::new("kubectl")
             .arg("-n")
-            .arg(&service.metadata.namespace)
+            .arg(namespace)
             .arg("port-forward")
             .arg(format!("service/{FLUVIO_SC_SERVICE}"))
             .arg(format!("{pf_port}:{target_port}"))
@@ -932,16 +961,19 @@ impl ClusterInstaller {
 
     /// Looks up the external address of a Fluvio SC instance in the given namespace
     #[instrument(skip(self))]
-    async fn discover_sc_service(&self) -> Result<K8Obj<ServiceSpec>> {
+    async fn discover_sc_service(&self) -> Result<Service> {
         use tokio::select;
         use futures_util::stream::StreamExt;
 
         use fluvio_future::timer::sleep;
-        use k8_types::K8Watch;
+        use kube::ResourceExt;
 
-        let mut service_stream = self
-            .kube_client
-            .watch_stream_now::<ServiceSpec>(self.config.namespace.clone());
+        let services: Api<Service> =
+            Api::namespaced(self.kube_client.clone(), &self.config.namespace);
+
+        let service_stream = watcher::watcher(services, watcher::Config::default())
+            .default_backoff();
+        tokio::pin!(service_stream);
 
         let mut timer = sleep(Duration::from_secs(*MAX_SC_SERVICE_WAIT));
         loop {
@@ -951,25 +983,22 @@ impl ClusterInstaller {
                     return Err(K8InstallError::SCServiceTimeout.into())
                 },
                 service_next = service_stream.next() => {
-                    if let Some(service_watches) = service_next {
-
-                        for service_watch in service_watches? {
-                            let service_value = match service_watch? {
-                                K8Watch::ADDED(svc) => Some(svc),
-                                K8Watch::MODIFIED(svc) => Some(svc),
-                                K8Watch::DELETED(_) => None
-                            };
-
-                            if let Some(service) = service_value
-
-                                && service.metadata.name == FLUVIO_SC_SERVICE {
-                                    debug!(service = ?service,"found sc service");
-                                    return Ok(service)
-                                }
+                    match service_next {
+                        Some(Ok(watcher::Event::Apply(svc) | watcher::Event::InitApply(svc))) => {
+                            if svc.name_any() == FLUVIO_SC_SERVICE {
+                                debug!(service = ?svc,"found sc service");
+                                return Ok(svc)
+                            }
                         }
-                    } else {
-                        debug!("service stream ended");
-                        return Err(K8InstallError::SCServiceTimeout.into())
+                        Some(Ok(watcher::Event::Delete(_))) => {}
+                        Some(Ok(watcher::Event::Init | watcher::Event::InitDone)) => {}
+                        Some(Err(err)) => {
+                            debug!("service watch error: {err}");
+                        }
+                        None => {
+                            debug!("service stream ended");
+                            return Err(K8InstallError::SCServiceTimeout.into())
+                        }
                     }
                 }
             }
@@ -978,16 +1007,19 @@ impl ClusterInstaller {
 
     /// Waits for SC pod
     #[instrument(skip(self))]
-    async fn wait_for_sc_availability(&self) -> Result<K8Obj<DeploymentSpec>> {
+    async fn wait_for_sc_availability(&self) -> Result<Deployment> {
         use tokio::select;
         use futures_util::stream::StreamExt;
 
         use fluvio_future::timer::sleep;
-        use k8_types::K8Watch;
+        use kube::ResourceExt;
 
-        let mut deployment_stream = self
-            .kube_client
-            .watch_stream_now::<DeploymentSpec>(self.config.namespace.clone());
+        let deployments: Api<Deployment> =
+            Api::namespaced(self.kube_client.clone(), &self.config.namespace);
+
+        let deployment_stream = watcher::watcher(deployments, watcher::Config::default())
+            .default_backoff();
+        tokio::pin!(deployment_stream);
 
         let mut timer = sleep(Duration::from_secs(*MAX_SC_DEPLOYMENT_AVAILABLE_WAIT));
         loop {
@@ -997,29 +1029,29 @@ impl ClusterInstaller {
                     return Err(K8InstallError::SCDeploymentTimeout.into())
                 },
                 deployment_next = deployment_stream.next() => {
-                    if let Some(deployment_watches) = deployment_next {
-
-                        for deployment_watch in deployment_watches? {
-                            let deployment_value = match deployment_watch? {
-                                K8Watch::ADDED(svc) => Some(svc),
-                                K8Watch::MODIFIED(svc) => Some(svc),
-                                K8Watch::DELETED(_) => None
-                            };
-
-                            if let Some(deployment) = deployment_value
-
-                                && deployment.metadata.name == FLUVIO_SC_DEPLOYMENT {
-                                    debug!(deployment = ?deployment,"found sc deployment");
-                                    if let Some(available_replicas) = deployment.status.available_replicas
-                                        && available_replicas > 0 {
-                                            debug!(deployment = ?deployment,"deployment has atleast 1 replica available");
-                                            return Ok(deployment)
+                    match deployment_next {
+                        Some(Ok(watcher::Event::Apply(dep) | watcher::Event::InitApply(dep))) => {
+                            if dep.name_any() == FLUVIO_SC_DEPLOYMENT {
+                                debug!(deployment = ?dep,"found sc deployment");
+                                if let Some(status) = &dep.status {
+                                    if let Some(available_replicas) = status.available_replicas {
+                                        if available_replicas > 0 {
+                                            debug!(deployment = ?dep,"deployment has atleast 1 replica available");
+                                            return Ok(dep)
                                         }
+                                    }
                                 }
+                            }
                         }
-                    } else {
-                        debug!("deployment stream ended");
-                        return Err(K8InstallError::SCDeploymentTimeout.into())
+                        Some(Ok(watcher::Event::Delete(_))) => {}
+                        Some(Ok(watcher::Event::Init | watcher::Event::InitDone)) => {}
+                        Some(Err(err)) => {
+                            debug!("deployment watch error: {err}");
+                        }
+                        None => {
+                            debug!("deployment stream ended");
+                            return Err(K8InstallError::SCDeploymentTimeout.into())
+                        }
                     }
                 }
             }
@@ -1030,74 +1062,114 @@ impl ClusterInstaller {
     #[instrument(skip(self, service))]
     async fn discover_sc_external_host_and_port(
         &self,
-        service: &K8Obj<ServiceSpec>,
+        service: &Service,
     ) -> Result<(String, u16)> {
         let target_port = ClusterInstaller::target_port_for_service(service)?;
 
-        let node_port = service
+        let svc_spec = service
             .spec
+            .as_ref()
+            .ok_or_else(|| anyhow!("Service has no spec"))?;
+
+        let node_port = svc_spec
             .ports
-            .iter()
+            .as_ref()
+            .into_iter()
+            .flatten()
             .filter_map(|port| port.node_port)
-            .next();
+            .next()
+            .map(|p| p as u16);
 
         if self.config.use_cluster_ip {
-            return Ok((service.spec.cluster_ip.clone(), target_port));
+            let cluster_ip = svc_spec
+                .cluster_ip
+                .as_ref()
+                .ok_or_else(|| anyhow!("Service has no cluster IP"))?;
+            return Ok((cluster_ip.clone(), target_port));
         };
 
-        let k8_load_balancer_type = service
-            .spec
-            .r#type
+        let k8_load_balancer_type = svc_spec
+            .type_
             .as_ref()
             .ok_or_else(|| anyhow!("Load Balancer Type"))?;
 
-        match k8_load_balancer_type {
-            LoadBalancerType::ClusterIP => Ok((service.spec.cluster_ip.clone(), target_port)),
-            LoadBalancerType::NodePort => {
-                let node_port = node_port.ok_or_else(|| anyhow!("Expecting a NodePort port"))?;
+        match k8_load_balancer_type.as_str() {
+            "ClusterIP" => {
+                let cluster_ip = svc_spec
+                    .cluster_ip
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("Service has no cluster IP"))?;
+                Ok((cluster_ip.clone(), target_port))
+            }
+            "NodePort" => {
+                let node_port =
+                    node_port.ok_or_else(|| anyhow!("Expecting a NodePort port"))?;
 
                 let host_addr = if let Some(addr) = &self.config.proxy_addr {
                     debug!(?addr, "using proxy");
                     addr.to_owned()
                 } else {
                     debug!("k8 node query");
-                    let nodes = self
-                        .kube_client
-                        .retrieve_items::<NodeSpec, _>(NameSpace::All)
+                    let nodes = Api::<Node>::all(self.kube_client.clone())
+                        .list(&ListParams::default())
                         .await?;
                     debug!("Output from k8 node query: {:#?}", &nodes);
 
-                    let mut node_addr: Vec<NodeAddress> = Vec::new();
-                    for n in nodes.items.into_iter().map(|x| x.status.addresses) {
-                        node_addr.extend(n)
+                    struct NodeAddr {
+                        r#type: String,
+                        address: String,
+                    }
+
+                    let mut node_addr: Vec<NodeAddr> = Vec::new();
+                    for node in nodes.items.iter() {
+                        if let Some(status) = &node.status {
+                            if let Some(addresses) = &status.addresses {
+                                for addr in addresses {
+                                    node_addr.push(NodeAddr {
+                                        r#type: addr.type_.clone(),
+                                        address: addr.address.clone(),
+                                    });
+                                }
+                            }
+                        }
                     }
 
                     // Return the first node with type "InternalIP"
-                    let access_addr = match node_addr.iter().find(|a| a.r#type == "ExternalIP") {
-                        Some(anode) => &anode.address,
-                        None => {
-                            debug!("  no externalIPs found, searching internalIPs");
-                            &node_addr
-                                .iter()
-                                .find(|a| a.r#type == "InternalIP")
-                                .ok_or_else(|| {
-                                    anyhow!("No nodes with ExternalIP or InternalIP set",)
-                                })?
-                                .address
-                        }
-                    };
+                    let access_addr =
+                        match node_addr.iter().find(|a| a.r#type == "ExternalIP") {
+                            Some(anode) => &anode.address,
+                            None => {
+                                debug!("  no externalIPs found, searching internalIPs");
+                                &node_addr
+                                    .iter()
+                                    .find(|a| a.r#type == "InternalIP")
+                                    .ok_or_else(|| {
+                                        anyhow!(
+                                            "No nodes with ExternalIP or InternalIP set",
+                                        )
+                                    })?
+                                    .address
+                            }
+                        };
                     access_addr.clone()
                 };
 
                 Ok((host_addr, node_port))
             }
-            LoadBalancerType::LoadBalancer => {
+            "LoadBalancer" => {
                 let ingress_host = service
                     .status
-                    .load_balancer
-                    .ingress
-                    .iter()
-                    .filter_map(|ingress| ingress.host_or_ip())
+                    .as_ref()
+                    .and_then(|s| s.load_balancer.as_ref())
+                    .and_then(|lb| lb.ingress.as_ref())
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|ingress| {
+                        ingress
+                            .hostname
+                            .as_deref()
+                            .or(ingress.ip.as_deref())
+                    })
                     .next();
 
                 if let Some(ingress_host) = ingress_host {
@@ -1107,20 +1179,27 @@ impl ClusterInstaller {
                     Err(K8InstallError::SCIngressNotValid.into())
                 }
             }
-            LoadBalancerType::ExternalName => {
+            "ExternalName" => {
                 unimplemented!("ExternalName Load Balancer support not implemented");
+            }
+            other => {
+                Err(anyhow!("Unknown service type: {other}"))
             }
         }
     }
 
-    fn target_port_for_service(service: &K8Obj<ServiceSpec>) -> Result<u16> {
+    fn target_port_for_service(service: &Service) -> Result<u16> {
+        use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
+
         service
             .spec
-            .ports
-            .iter()
-            .filter_map(|port| match port.target_port {
-                Some(TargetPort::Number(value)) => Some(value),
-                Some(TargetPort::Name(_)) => None,
+            .as_ref()
+            .and_then(|s| s.ports.as_ref())
+            .into_iter()
+            .flatten()
+            .filter_map(|port| match &port.target_port {
+                Some(IntOrString::Int(value)) => Some(*value as u16),
+                Some(IntOrString::String(_)) => None,
                 None => None,
             })
             .next()
@@ -1295,20 +1374,11 @@ impl ClusterInstaller {
 
     /// Determines a profile name from the name of the active Kubernetes context
     fn compute_profile_name(&self) -> Result<String> {
-        let k8_config = K8Config::load()?;
+        let kubeconfig = Kubeconfig::read().map_err(|e| anyhow!("Failed to read kubeconfig: {e}"))?;
 
-        let kc_config = match k8_config {
-            K8Config::Pod(_) => {
-                return Err(anyhow!("Pod config is not valid here"));
-            }
-            K8Config::KubeConfig(config) => config,
-        };
-
-        kc_config
-            .config
-            .current_context()
-            .ok_or_else(|| anyhow!("No context fount"))
-            .map(|ctx| ctx.name.to_owned())
+        kubeconfig
+            .current_context
+            .ok_or_else(|| anyhow!("No context found"))
     }
 
     /// Provisions a SPU group for the given cluster according to internal config

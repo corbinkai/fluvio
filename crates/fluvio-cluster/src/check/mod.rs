@@ -20,7 +20,7 @@ use url::ParseError;
 use fluvio_future::timer::sleep;
 use fluvio_types::config_file::SaveLoadConfig;
 use fluvio_helm::{HelmClient, HelmError};
-use k8_config::{ConfigError as K8ConfigError, K8Config};
+use kube::config::Kubeconfig;
 
 use crate::charts::{DEFAULT_HELM_VERSION, APP_CHART_NAME};
 use crate::progress::ProgressBarFactory;
@@ -52,8 +52,8 @@ pub enum ClusterCheckError {
     HelmError(#[from] HelmError),
 
     /// There was a problem fetching kubernetes configuration
-    #[error("Kubernetes config error")]
-    K8ConfigError(#[from] K8ConfigError),
+    #[error("Kubernetes config error: {0}")]
+    K8ConfigError(String),
 
     /// Failed to parse kubernetes cluster server URL
     #[error("Failed to parse server url from Kubernetes context")]
@@ -107,8 +107,8 @@ pub enum ClusterAutoFixError {
     Helm(#[from] HelmError),
 
     /// There was a problem fetching kubernetes configuration
-    #[error("Kubernetes config error")]
-    K8Config(#[from] K8ConfigError),
+    #[error("Kubernetes config error: {0}")]
+    K8Config(String),
 
     #[error("Chart Install error")]
     ChartInstall(#[from] ChartInstallError),
@@ -305,14 +305,8 @@ pub(crate) struct ActiveKubernetesCluster;
 impl ClusterCheck for ActiveKubernetesCluster {
     /// Checks that we can connect to Kubernetes via the active context
     async fn perform_check(&self, _pb: &ProgressRenderer) -> CheckResult {
-        let config = match K8Config::load() {
+        let kubeconfig = match Kubeconfig::read() {
             Ok(config) => config,
-            Err(K8ConfigError::NoCurrentContext) => {
-                return Ok(CheckStatus::Unrecoverable(
-                    UnrecoverableCheckStatus::NoActiveKubernetesContext,
-                ));
-            }
-
             Err(err) => {
                 return Ok(CheckStatus::Unrecoverable(
                     UnrecoverableCheckStatus::UnhandledK8ClientError(format!("K8 Error: {err:#?}")),
@@ -320,20 +314,36 @@ impl ClusterCheck for ActiveKubernetesCluster {
             }
         };
 
-        let context = match config {
-            K8Config::Pod(_) => {
-                return Ok(CheckStatus::Unrecoverable(UnrecoverableCheckStatus::Other(
-                    "Pod config found".to_owned(),
-                )));
+        let current_context = match &kubeconfig.current_context {
+            Some(ctx) => ctx.clone(),
+            None => {
+                return Ok(CheckStatus::Unrecoverable(
+                    UnrecoverableCheckStatus::NoActiveKubernetesContext,
+                ));
             }
-            K8Config::KubeConfig(context) => context,
         };
 
-        match context.config.current_cluster() {
-            Some(cluster) => Ok(CheckStatus::pass(format!(
-                "Kubectl active cluster {} at: {} found",
-                context.config.current_context, cluster.cluster.server
-            ))),
+        // Find the cluster for the current context
+        let context_entry = kubeconfig.contexts.iter()
+            .find(|c| c.name == current_context);
+
+        let cluster_name = context_entry
+            .and_then(|c| c.context.as_ref())
+            .map(|c| c.cluster.clone());
+
+        let cluster = cluster_name.as_ref().and_then(|name| {
+            kubeconfig.clusters.iter().find(|c| &c.name == name)
+        });
+
+        match cluster {
+            Some(c) => {
+                let server = c.cluster.as_ref()
+                    .map(|cl| cl.server.as_deref().unwrap_or("unknown"))
+                    .unwrap_or("unknown");
+                Ok(CheckStatus::pass(format!(
+                    "Kubectl active cluster {current_context} at: {server} found",
+                )))
+            }
             None => Ok(CheckStatus::Unrecoverable(
                 UnrecoverableCheckStatus::NoActiveKubernetesContext,
             )),

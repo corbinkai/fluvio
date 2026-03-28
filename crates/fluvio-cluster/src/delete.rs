@@ -1,7 +1,6 @@
 use std::process::Command;
 
 use derive_builder::Builder;
-use k8_client::meta_client::MetadataClient;
 use tracing::{info, warn, debug, instrument};
 
 use fluvio_command::CommandExt;
@@ -226,36 +225,28 @@ impl ClusterUninstaller {
     /// in order to remove partitions, finalizers need to be cleared
     #[instrument(skip(self))]
     async fn remove_finalizers_for_partitions(&self, namespace: &str) -> Result<()> {
-        use fluvio_controlplane_metadata::partition::PartitionSpec;
-        use fluvio_controlplane_metadata::store::k8::K8ExtendedSpec;
-        use k8_client::load_and_share;
-        use k8_client::meta_client::PatchMergeType::JsonMerge;
+        use kube::api::{Api, DynamicObject, ApiResource, GroupVersionKind, ListParams, Patch, PatchParams};
 
-        let client = load_and_share()?;
+        let client = kube::Client::try_default().await?;
 
-        let partitions = client
-            .retrieve_items::<<PartitionSpec as K8ExtendedSpec>::K8Spec, _>(namespace)
-            .await?;
+        let partition_ar = ApiResource::from_gvk(&GroupVersionKind::gvk(
+            "fluvio.infinyon.com", "v1", "Partition",
+        ));
+        let partitions: Api<DynamicObject> = Api::namespaced_with(client, namespace, &partition_ar);
 
-        if !partitions.items.is_empty() {
-            let finalizer: serde_json::Value = serde_json::from_str(
-                r#"
-                    {
-                        "metadata": {
-                            "finalizers":null
-                        }
-                    }
-                "#,
-            )
-            .expect("finalizer");
+        let list = partitions.list(&ListParams::default()).await?;
 
-            for partition in partitions.items.into_iter() {
-                client
-                    .patch::<<PartitionSpec as K8ExtendedSpec>::K8Spec, _>(
-                        &partition.metadata.as_input(),
-                        &finalizer,
-                        JsonMerge,
-                    )
+        if !list.items.is_empty() {
+            let finalizer = serde_json::json!({
+                "metadata": {
+                    "finalizers": null
+                }
+            });
+
+            for partition in list.items.iter() {
+                let name = partition.metadata.name.as_deref().unwrap_or_default();
+                partitions
+                    .patch(name, &PatchParams::default(), &Patch::Merge(&finalizer))
                     .await?;
             }
         }

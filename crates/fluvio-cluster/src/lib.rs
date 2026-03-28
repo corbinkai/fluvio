@@ -13,7 +13,7 @@
 //! use semver::Version;
 //! # async fn example() -> anyhow::Result<()> {
 //! let config = ClusterConfig::builder(Version::parse("0.7.0-alpha.1").unwrap()).build()?;
-//! let installer = ClusterInstaller::from_config(config)?;
+//! let installer = ClusterInstaller::from_config(config).await?;
 //! installer.install_fluvio().await?;
 //! # Ok(())
 //! # }

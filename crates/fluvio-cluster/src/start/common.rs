@@ -3,8 +3,6 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use fluvio_controlplane_metadata::spu::SpuSpec;
-use k8_client::SharedK8Client;
 use once_cell::sync::Lazy;
 use semver::Version;
 use tracing::{debug, error, info, instrument, warn};
@@ -116,18 +114,23 @@ pub async fn try_connect_to_sc(
 }
 
 // hack
-pub async fn check_crd(client: SharedK8Client) -> anyhow::Result<()> {
-    use k8_client::meta_client::MetadataClient;
+pub async fn check_crd(client: kube::Client) -> anyhow::Result<()> {
+    use kube::api::{Api, DynamicObject, ApiResource, GroupVersionKind, ListParams};
+
+    let spu_ar = ApiResource::from_gvk(&GroupVersionKind::gvk("fluvio.infinyon.com", "v1", "Spu"));
+    let spus: Api<DynamicObject> = Api::namespaced_with(client, "default", &spu_ar);
 
     for i in 0..100 {
         debug!("checking fluvio crd attempt: {}", i);
-        // check if spu is installed
-        if let Err(err) = client.retrieve_items::<SpuSpec, _>("default").await {
-            debug!("problem retrieving fluvio crd {}", err);
-            sleep(Duration::from_secs(1)).await;
-        } else {
-            debug!("fluvio crd installed");
-            return Ok(());
+        match spus.list(&ListParams::default().limit(1)).await {
+            Err(err) => {
+                debug!("problem retrieving fluvio crd {}", err);
+                sleep(Duration::from_secs(1)).await;
+            }
+            Ok(_) => {
+                debug!("fluvio crd installed");
+                return Ok(());
+            }
         }
     }
 

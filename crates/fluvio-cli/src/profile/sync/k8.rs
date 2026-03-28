@@ -6,11 +6,6 @@ use anyhow::{Result, anyhow};
 
 use fluvio::config::{Profile, ConfigFile};
 use fluvio::FluvioClusterConfig;
-use k8_config::K8Config;
-use k8_client::K8Client;
-use k8_client::meta_client::MetadataClient;
-use k8_types::core::service::ServiceSpec;
-use k8_types::InputObjectMeta;
 
 use crate::common::tls::TlsClientOpt;
 
@@ -47,20 +42,12 @@ impl K8Opt {
     }
 }
 
-/// compute profile name, if name exists in the cli option, we use that
-/// otherwise, we look up k8 config context name
+/// compute profile name from kubeconfig current context
 fn compute_profile_name() -> Result<String> {
-    let k8_config = K8Config::load()?;
-
-    let kc_config = match k8_config {
-        K8Config::Pod(_) => return Err(anyhow!("Pod config is not valid here")),
-        K8Config::KubeConfig(config) => config,
-    };
-
-    if let Some(ctx) = kc_config.config.current_context() {
-        Ok(ctx.name.to_owned())
-    } else {
-        Err(anyhow!("no context found"))
+    let kubeconfig = kube::config::Kubeconfig::read()?;
+    match kubeconfig.current_context {
+        Some(ctx) => Ok(ctx),
+        None => Err(anyhow!("no context found")),
     }
 }
 
@@ -87,7 +74,6 @@ pub async fn set_k8_context(opt: K8Opt, external_addr: String) -> Result<Profile
         }
     };
 
-    // check if we local profile exits otherwise, create new one, then set name as cluster
     let new_profile = match config.profile_mut(&profile_name) {
         Some(profile) => {
             profile.set_cluster(profile_name.clone());
@@ -100,41 +86,46 @@ pub async fn set_k8_context(opt: K8Opt, external_addr: String) -> Result<Profile
         }
     };
 
-    // finally we set current profile to local
     assert!(config.set_current_profile(&profile_name));
-
     config_file.save()?;
-
     println!("k8 profile set");
-
     Ok(new_profile)
 }
 
-/// find fluvio addr
+/// find fluvio addr by looking up the fluvio-sc-public Service
 pub async fn discover_fluvio_addr(namespace: Option<&str>) -> Result<Option<String>> {
-    let ns = namespace.unwrap_or("default");
-    let maybe_svc = K8Client::try_default()?
-        .retrieve_item::<ServiceSpec, _>(&InputObjectMeta::named("fluvio-sc-public", ns))
-        .await?;
+    use k8s_openapi::api::core::v1::Service;
+    use kube::api::Api;
 
-    let Some(svc) = maybe_svc else {
-        return Ok(None);
+    let ns = namespace.unwrap_or("default");
+    let client = kube::Client::try_default().await?;
+    let services: Api<Service> = Api::namespaced(client, ns);
+
+    let svc = match services.get_opt("fluvio-sc-public").await? {
+        Some(svc) => svc,
+        None => return Ok(None),
     };
 
     debug!("fluvio svc: {:#?}", svc);
 
     let ingress_addr = svc
         .status
-        .load_balancer
-        .ingress
-        .first()
-        .and_then(|ingress| ingress.host_or_ip());
+        .as_ref()
+        .and_then(|s| s.load_balancer.as_ref())
+        .and_then(|lb| lb.ingress.as_ref())
+        .and_then(|ingress| ingress.first())
+        .and_then(|i| i.hostname.as_deref().or(i.ip.as_deref()));
 
     let target_port = svc
         .spec
-        .ports
-        .first()
-        .and_then(|port| port.target_port.as_ref());
+        .as_ref()
+        .and_then(|s| s.ports.as_ref())
+        .and_then(|ports| ports.first())
+        .and_then(|port| port.target_port.as_ref())
+        .map(|tp| match tp {
+            k8s_openapi::apimachinery::pkg::util::intstr::IntOrString::Int(p) => p.to_string(),
+            k8s_openapi::apimachinery::pkg::util::intstr::IntOrString::String(s) => s.clone(),
+        });
 
     let address = match (ingress_addr, target_port) {
         (Some(addr), Some(port)) => Some(format!("{addr}:{port}")),
